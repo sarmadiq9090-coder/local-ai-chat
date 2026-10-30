@@ -6,6 +6,8 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 const APP_DIR: &str = "LocalAiChat";
+/// Env var that overrides every data location (see `Paths::resolve`).
+pub const DATA_DIR_ENV: &str = "LOCALAI_DATA_DIR";
 
 /// Filesystem locations used by the app.
 #[derive(Clone, Debug)]
@@ -26,17 +28,27 @@ pub struct Paths {
 
 impl Paths {
     pub fn resolve() -> anyhow::Result<Self> {
+        // `LOCALAI_DATA_DIR` keeps everything (data, WebView2 profile, exports) in one
+        // folder: for tests, screenshots and portable use.
+        if let Some(root) = std::env::var_os(DATA_DIR_ENV).filter(|v| !v.is_empty()) {
+            let root = PathBuf::from(root);
+            return Self::build(root.clone(), root.join("local"), root.join("exports"));
+        }
         let data_dir = dirs::data_dir().context("no APPDATA dir")?.join(APP_DIR);
         let local_dir = dirs::data_local_dir()
             .context("no LOCALAPPDATA dir")?
             .join(APP_DIR);
         let docs = dirs::document_dir().unwrap_or_else(|| data_dir.clone());
+        Self::build(data_dir, local_dir, docs.join(APP_DIR))
+    }
+
+    fn build(data_dir: PathBuf, local_dir: PathBuf, export_dir: PathBuf) -> anyhow::Result<Self> {
         let paths = Self {
             conversations_dir: data_dir.join("conversations"),
             assistants_dir: data_dir.join("assistants"),
             settings_file: data_dir.join("settings.json"),
             webview_dir: local_dir.join("webview"),
-            export_dir: docs.join(APP_DIR),
+            export_dir,
             data_dir,
         };
         std::fs::create_dir_all(&paths.conversations_dir)?;

@@ -52,13 +52,9 @@ Planned (see [ROADMAP.md](ROADMAP.md), Arabic):
 
 ## Screenshots
 
-_Screenshots coming soon._ They will live in [`docs/screenshots/`](docs/screenshots/).
-
-<!--
-![Chat](docs/screenshots/chat.png)
-![Live preview](docs/screenshots/preview.png)
-![Model manager](docs/screenshots/models.png)
--->
+| English | العربية |
+|---|---|
+| ![English UI](docs/screenshots/home-en.png) | ![Arabic UI](docs/screenshots/home-ar.png) |
 
 ## Requirements
 
@@ -140,6 +136,10 @@ cargo clippy           # lints
 
 To reset the app, close it and delete the `LocalAiChat` folders above. Your
 models are not affected.
+
+**Portable / separate data:** set the environment variable `LOCALAI_DATA_DIR` to a
+folder and the app keeps everything there instead (settings, conversations,
+assistants, WebView2 profile, and exports in `<folder>\exports`).
 
 ## Privacy
 

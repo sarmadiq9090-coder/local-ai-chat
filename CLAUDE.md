@@ -24,6 +24,9 @@ cargo check && cargo test
   (`server/guard.rs`), so open the UI via one of those exact hosts.
 - The app holds a **single-instance mutex**: launching the exe twice just focuses the first
   window. Test with `--serve <port>` (no window, no mutex), never by launching the exe twice.
+- `LOCALAI_DATA_DIR=<folder>` puts all data (settings, conversations, assistants, WebView2
+  profile, exports) in that folder — use it for tests/screenshots so the user's real data is
+  never touched or shown.
 - Data: `%APPDATA%\LocalAiChat\` (settings.json, conversations\*.json, assistants\{id}\ with
   assistant.json, docs\*.txt, index.json). Exports: `Documents\LocalAiChat\`.
 
