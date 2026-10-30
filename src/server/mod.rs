@@ -6,12 +6,13 @@
 //! - everything else: embedded static UI files (see `assets`)
 
 mod assets;
+mod guard;
 mod ollama_proxy;
 mod routes;
 
 use std::sync::{Arc, mpsc};
 
-use axum::{Router, extract::DefaultBodyLimit};
+use axum::{Router, extract::DefaultBodyLimit, middleware};
 use tokio::sync::{OnceCell, RwLock};
 
 use crate::config::{Paths, Settings};
@@ -70,17 +71,21 @@ pub async fn run(paths: Paths, port: u16, port_tx: mpsc::Sender<u16>) -> anyhow:
         tokio::spawn(async move { state.system_info().await; });
     }
 
+    // Port 0 = let Windows pick a free port; bound to loopback only.
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
+    let port = listener.local_addr()?.port();
+
     let app = Router::new()
         .nest("/api/app", routes::router())
         .nest("/api/ollama", ollama_proxy::router())
         .fallback(assets::serve)
         // Chats resend attachments with the whole history; the 2 MB default is too small.
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
+        // Reject requests from other websites / DNS rebinding (see guard.rs).
+        .layer(middleware::from_fn_with_state(guard::BoundPort(port), guard::check))
         .with_state(state);
 
-    // Port 0 = let Windows pick a free port; bound to loopback only.
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
-    port_tx.send(listener.local_addr()?.port())?;
+    port_tx.send(port)?;
     axum::serve(listener, app).await?;
     Ok(())
 }

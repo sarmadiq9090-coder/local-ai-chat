@@ -16,6 +16,12 @@ cargo check && cargo test
 
 - In **debug** builds `--serve` reads `ui/` from disk: UI edits need only a browser refresh.
   Rust edits need `cargo build` + restart.
+- **Parallel agents:** a running exe locks `target\debug\local-ai-chat.exe` and breaks everyone's
+  `cargo build`. So never run it in place: copy it first and run the copy on your own port, e.g.
+  `cp target/debug/local-ai-chat.exe target/dev-<you>.exe && target/dev-<you>.exe --serve 879x`
+  (the copy still reads `ui/` from disk). Stop it when done.
+- The server rejects requests whose `Host`/`Origin` isn't `127.0.0.1:<port>` / `localhost:<port>`
+  (`server/guard.rs`), so open the UI via one of those exact hosts.
 - The app holds a **single-instance mutex**: launching the exe twice just focuses the first
   window. Test with `--serve <port>` (no window, no mutex), never by launching the exe twice.
 - Data: `%APPDATA%\LocalAiChat\` (settings.json, conversations\*.json). Exports: `Documents\LocalAiChat\`.
