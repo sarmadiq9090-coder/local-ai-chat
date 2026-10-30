@@ -27,7 +27,9 @@ pub struct Paths {
 impl Paths {
     pub fn resolve() -> anyhow::Result<Self> {
         let data_dir = dirs::data_dir().context("no APPDATA dir")?.join(APP_DIR);
-        let local_dir = dirs::data_local_dir().context("no LOCALAPPDATA dir")?.join(APP_DIR);
+        let local_dir = dirs::data_local_dir()
+            .context("no LOCALAPPDATA dir")?
+            .join(APP_DIR);
         let docs = dirs::document_dir().unwrap_or_else(|| data_dir.clone());
         let paths = Self {
             conversations_dir: data_dir.join("conversations"),
@@ -116,7 +118,11 @@ impl Settings {
             self.language = "ar".into();
         }
         // Keep the built-in prompt in the UI language; never touch a custom one.
-        let (own, other) = if self.language == "en" { (DEFAULT_PROMPT_EN, DEFAULT_PROMPT_AR) } else { (DEFAULT_PROMPT_AR, DEFAULT_PROMPT_EN) };
+        let (own, other) = if self.language == "en" {
+            (DEFAULT_PROMPT_EN, DEFAULT_PROMPT_AR)
+        } else {
+            (DEFAULT_PROMPT_AR, DEFAULT_PROMPT_EN)
+        };
         if self.system_prompt.trim() == other {
             self.system_prompt = own.into();
         }
@@ -152,11 +158,24 @@ mod language_tests {
 
     #[test]
     fn default_prompt_follows_language_custom_kept() {
-        let s = Settings { language: "en".into(), ..Default::default() }.sanitized();
+        let s = Settings {
+            language: "en".into(),
+            ..Default::default()
+        }
+        .sanitized();
         assert_eq!(s.system_prompt, DEFAULT_PROMPT_EN);
-        let s = Settings { language: "ar".into(), ..s }.sanitized();
+        let s = Settings {
+            language: "ar".into(),
+            ..s
+        }
+        .sanitized();
         assert_eq!(s.system_prompt, DEFAULT_PROMPT_AR);
-        let s = Settings { language: "en".into(), system_prompt: "custom".into(), ..Default::default() }.sanitized();
+        let s = Settings {
+            language: "en".into(),
+            system_prompt: "custom".into(),
+            ..Default::default()
+        }
+        .sanitized();
         assert_eq!(s.system_prompt, "custom");
     }
 }

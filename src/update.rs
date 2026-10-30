@@ -62,8 +62,17 @@ impl Version {
             None => (s, Vec::new()),
         };
         let mut parts = core.split('.');
-        let num = |p: Option<&str>| p.filter(|x| !x.is_empty() && x.bytes().all(|b| b.is_ascii_digit()))?.parse().ok();
-        let v = Self { major: num(parts.next())?, minor: num(parts.next())?, patch: num(parts.next())?, pre };
+        let num = |p: Option<&str>| {
+            p.filter(|x| !x.is_empty() && x.bytes().all(|b| b.is_ascii_digit()))?
+                .parse()
+                .ok()
+        };
+        let v = Self {
+            major: num(parts.next())?,
+            minor: num(parts.next())?,
+            patch: num(parts.next())?,
+            pre,
+        };
         if parts.next().is_some() || v.pre.iter().any(String::is_empty) {
             return None;
         }
@@ -153,15 +162,29 @@ pub fn parse_release(json: &[u8]) -> anyhow::Result<ReleaseInfo> {
     if r.draft {
         bail!("release is a draft");
     }
-    let v = Version::parse(&r.tag_name).with_context(|| format!("invalid version tag {:?}", r.tag_name))?;
-    let url_of = |name: &str| r.assets.iter().find(|a| a.name.eq_ignore_ascii_case(name)).map(|a| a.browser_download_url.clone());
-    let asset_url = url_of(ASSET_NAME).with_context(|| format!("release has no {ASSET_NAME} asset"))?;
-    let sha_url = url_of(SHA_ASSET_NAME).with_context(|| format!("release has no {SHA_ASSET_NAME} asset"))?;
+    let v = Version::parse(&r.tag_name)
+        .with_context(|| format!("invalid version tag {:?}", r.tag_name))?;
+    let url_of = |name: &str| {
+        r.assets
+            .iter()
+            .find(|a| a.name.eq_ignore_ascii_case(name))
+            .map(|a| a.browser_download_url.clone())
+    };
+    let asset_url =
+        url_of(ASSET_NAME).with_context(|| format!("release has no {ASSET_NAME} asset"))?;
+    let sha_url =
+        url_of(SHA_ASSET_NAME).with_context(|| format!("release has no {SHA_ASSET_NAME} asset"))?;
     let mut version = format!("{}.{}.{}", v.major, v.minor, v.patch);
     if !v.pre.is_empty() {
         version = format!("{version}-{}", v.pre.join("."));
     }
-    Ok(ReleaseInfo { version, notes: r.body.unwrap_or_default(), published_at: r.published_at, asset_url, sha_url })
+    Ok(ReleaseInfo {
+        version,
+        notes: r.body.unwrap_or_default(),
+        published_at: r.published_at,
+        asset_url,
+        sha_url,
+    })
 }
 
 fn feed_url() -> String {
@@ -197,13 +220,20 @@ pub async fn fetch_latest() -> anyhow::Result<Option<ReleaseInfo>> {
     if status == reqwest::StatusCode::NOT_FOUND {
         return Ok(None);
     }
-    if status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        bail!("update server rate limit reached, try again later (HTTP {})", status.as_u16());
+    if status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+    {
+        bail!(
+            "update server rate limit reached, try again later (HTTP {})",
+            status.as_u16()
+        );
     }
     if !status.is_success() {
         bail!("update server returned HTTP {}", status.as_u16());
     }
-    let bytes = resp.bytes().await.context("could not read the update info")?;
+    let bytes = resp
+        .bytes()
+        .await
+        .context("could not read the update info")?;
     parse_release(&bytes).map(Some)
 }
 
@@ -211,7 +241,10 @@ pub async fn fetch_latest() -> anyhow::Result<Option<ReleaseInfo>> {
 
 /// Parse a `sha256sum`-style file (`<64 hex>  <name>`, or just the hex).
 pub fn parse_sha256_file(text: &str) -> Option<[u8; 32]> {
-    let token = text.trim_start_matches('\u{feff}').split_whitespace().next()?;
+    let token = text
+        .trim_start_matches('\u{feff}')
+        .split_whitespace()
+        .next()?;
     if token.len() != 64 {
         return None;
     }
@@ -231,7 +264,11 @@ pub fn to_hex(bytes: &[u8]) -> String {
 pub fn verify_sha256(data: &[u8], expected: &[u8; 32]) -> anyhow::Result<()> {
     let actual: [u8; 32] = Sha256::digest(data).into();
     if &actual != expected {
-        bail!("checksum mismatch (expected {}, got {})", to_hex(expected), to_hex(&actual));
+        bail!(
+            "checksum mismatch (expected {}, got {})",
+            to_hex(expected),
+            to_hex(&actual)
+        );
     }
     Ok(())
 }
@@ -249,7 +286,10 @@ pub enum Progress {
 /// Download, verify, swap and relaunch. On success the new exe is running (or
 /// starting) and the caller should report "restarting" and call [`request_exit`].
 /// On error the current exe is left in place.
-pub async fn install(release: &ReleaseInfo, mut progress: impl FnMut(Progress)) -> anyhow::Result<()> {
+pub async fn install(
+    release: &ReleaseInfo,
+    mut progress: impl FnMut(Progress),
+) -> anyhow::Result<()> {
     let sha_text = http()
         .get(&release.sha_url)
         .timeout(Duration::from_secs(30))
@@ -272,17 +312,26 @@ pub async fn install(release: &ReleaseInfo, mut progress: impl FnMut(Progress)) 
     let mut data = Vec::with_capacity(total.unwrap_or(0).min(512 << 20) as usize);
     let mut stream = resp.bytes_stream();
     let mut last_report = 0u64;
-    progress(Progress::Downloading { downloaded: 0, total });
+    progress(Progress::Downloading {
+        downloaded: 0,
+        total,
+    });
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.context("download interrupted")?;
         data.extend_from_slice(&chunk);
         let n = data.len() as u64;
         if n - last_report >= 256 * 1024 {
             last_report = n;
-            progress(Progress::Downloading { downloaded: n, total });
+            progress(Progress::Downloading {
+                downloaded: n,
+                total,
+            });
         }
     }
-    progress(Progress::Downloading { downloaded: data.len() as u64, total });
+    progress(Progress::Downloading {
+        downloaded: data.len() as u64,
+        total,
+    });
     if data.is_empty() {
         bail!("the downloaded file is empty");
     }
@@ -353,7 +402,8 @@ pub fn set_relaunch_args(args: Vec<String>) {
 
 fn relaunch(exe: &Path) -> anyhow::Result<()> {
     let mut cmd = std::process::Command::new(exe);
-    cmd.args(RELAUNCH_ARGS.get().into_iter().flatten()).arg(AFTER_UPDATE_ARG);
+    cmd.args(RELAUNCH_ARGS.get().into_iter().flatten())
+        .arg(AFTER_UPDATE_ARG);
     if let Some(dir) = exe.parent() {
         cmd.current_dir(dir);
     }
@@ -388,7 +438,9 @@ static JUST_UPDATED: Mutex<Option<String>> = Mutex::new(None);
 pub fn after_update() {
     *JUST_UPDATED.lock().unwrap_or_else(|e| e.into_inner()) = Some(CURRENT_VERSION.to_string());
     std::thread::spawn(|| {
-        let Ok(exe) = std::env::current_exe() else { return };
+        let Ok(exe) = std::env::current_exe() else {
+            return;
+        };
         let old = sibling(&exe, OLD_EXE_NAME);
         for _ in 0..40 {
             if !old.exists() || std::fs::remove_file(&old).is_ok() {
@@ -401,7 +453,10 @@ pub fn after_update() {
 
 /// The version we just updated to — returned once, then cleared.
 pub fn take_just_updated() -> Option<String> {
-    JUST_UPDATED.lock().unwrap_or_else(|e| e.into_inner()).take()
+    JUST_UPDATED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
 }
 
 /// `--serve` after an update: wait (up to ~10 s) until the old process freed the port.
@@ -441,15 +496,22 @@ mod tests {
         assert!(!is_newer("garbage", "2.0.0"));
     }
 
-    const SHA_LINE: &str = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08  local-ai-chat.exe\n";
+    const SHA_LINE: &str =
+        "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08  local-ai-chat.exe\n";
 
     #[test]
     fn sha256_parse_and_verify() {
         let expected = parse_sha256_file(SHA_LINE).unwrap();
-        assert_eq!(to_hex(&expected), "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08");
+        assert_eq!(
+            to_hex(&expected),
+            "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+        );
         verify_sha256(b"test", &expected).unwrap();
         assert!(verify_sha256(b"tesT", &expected).is_err());
-        assert!(parse_sha256_file("9F86D081884C7D659A2FEAA0C55AD015A3BF4F1B2B0B822CD15D6C15B0F00A08").is_some());
+        assert!(
+            parse_sha256_file("9F86D081884C7D659A2FEAA0C55AD015A3BF4F1B2B0B822CD15D6C15B0F00A08")
+                .is_some()
+        );
         assert!(parse_sha256_file("").is_none());
         assert!(parse_sha256_file("abc  local-ai-chat.exe").is_none());
         assert!(parse_sha256_file(&"zz".repeat(32)).is_none());
@@ -480,9 +542,11 @@ mod tests {
 
         let no_assets = r#"{"tag_name": "v2.1.0", "assets": []}"#;
         assert!(parse_release(no_assets.as_bytes()).is_err());
-        let bad_tag = RELEASE_JSON.replace("v2.1.0\",\n        \"name", "nightly\",\n        \"name");
+        let bad_tag =
+            RELEASE_JSON.replace("v2.1.0\",\n        \"name", "nightly\",\n        \"name");
         assert!(parse_release(bad_tag.as_bytes()).is_err());
-        let github_404 = r#"{"message": "Not Found", "documentation_url": "https://docs.github.com/rest"}"#;
+        let github_404 =
+            r#"{"message": "Not Found", "documentation_url": "https://docs.github.com/rest"}"#;
         assert!(parse_release(github_404.as_bytes()).is_err());
     }
 
@@ -495,7 +559,11 @@ mod tests {
             if let Ok((mut s, _)) = listener.accept() {
                 let mut buf = [0u8; 4096];
                 let _ = s.read(&mut buf);
-                let _ = write!(s, "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                let _ = write!(
+                    s,
+                    "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
             }
         });
         url
@@ -505,11 +573,27 @@ mod tests {
     async fn feed_404_and_errors() {
         // Only this test touches the env var (tests in this module run it serially here).
         // SAFETY: no other test reads or writes LOCALAI_UPDATE_FEED.
-        unsafe { std::env::set_var(FEED_ENV, one_shot_server("404 Not Found", r#"{"message":"Not Found"}"#)) };
+        unsafe {
+            std::env::set_var(
+                FEED_ENV,
+                one_shot_server("404 Not Found", r#"{"message":"Not Found"}"#),
+            )
+        };
         assert_eq!(fetch_latest().await.unwrap(), None);
 
-        unsafe { std::env::set_var(FEED_ENV, one_shot_server("403 Forbidden", r#"{"message":"rate limit"}"#)) };
-        assert!(fetch_latest().await.unwrap_err().to_string().contains("rate limit"));
+        unsafe {
+            std::env::set_var(
+                FEED_ENV,
+                one_shot_server("403 Forbidden", r#"{"message":"rate limit"}"#),
+            )
+        };
+        assert!(
+            fetch_latest()
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("rate limit")
+        );
 
         unsafe { std::env::set_var(FEED_ENV, one_shot_server("200 OK", RELEASE_JSON)) };
         assert_eq!(fetch_latest().await.unwrap().unwrap().version, "2.1.0");

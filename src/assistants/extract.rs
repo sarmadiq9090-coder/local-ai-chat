@@ -100,13 +100,17 @@ mod tests {
     async fn rejects_unsupported() {
         let err = extract("a.exe", vec![0, 1, 2]).await.unwrap_err();
         assert!(err.to_string().contains("unsupported file type"));
-        let ok = extract("a.md", "# عنوان\n\nنص".as_bytes().to_vec()).await.unwrap();
+        let ok = extract("a.md", "# عنوان\n\nنص".as_bytes().to_vec())
+            .await
+            .unwrap();
         assert_eq!(ok, "# عنوان\n\nنص");
     }
 
     #[tokio::test]
     async fn corrupt_pdf_is_an_error() {
-        let err = extract("bad.pdf", b"%PDF-1.4 not really".to_vec()).await.unwrap_err();
+        let err = extract("bad.pdf", b"%PDF-1.4 not really".to_vec())
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("PDF"), "{err:#}");
     }
 }

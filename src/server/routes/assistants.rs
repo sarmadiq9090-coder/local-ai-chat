@@ -19,8 +19,8 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use crate::assistants::{
-    extract,
     AssistantPatch, AssistantStore, DocInput, ModelMissing, NewAssistant, NotFound, Progress,
+    extract,
 };
 use crate::error::{ApiError, ApiResult};
 use crate::server::AppState;
@@ -30,7 +30,10 @@ pub fn router() -> Router<AppState> {
         .route("/assistants", get(list).post(create))
         .route("/assistants/{id}", get(get_one).put(update).delete(remove))
         .route("/assistants/{id}/docs", post(add_docs))
-        .route("/assistants/{id}/docs/{doc_id}", get(doc_text).delete(remove_doc))
+        .route(
+            "/assistants/{id}/docs/{doc_id}",
+            get(doc_text).delete(remove_doc),
+        )
         .route("/assistants/{id}/reindex", post(reindex))
         .route("/assistants/{id}/search", post(search))
 }
@@ -51,13 +54,20 @@ fn map_err(e: anyhow::Error) -> ApiError {
 fn model_missing_response(e: &anyhow::Error) -> Option<Response> {
     let mm = e.downcast_ref::<ModelMissing>()?;
     Some(
-        (StatusCode::FAILED_DEPENDENCY, Json(json!({ "error": mm.to_string(), "missing_model": mm.0 })))
+        (
+            StatusCode::FAILED_DEPENDENCY,
+            Json(json!({ "error": mm.to_string(), "missing_model": mm.0 })),
+        )
             .into_response(),
     )
 }
 
 fn check_id(id: &str) -> ApiResult<()> {
-    if AssistantStore::valid_id(id) { Ok(()) } else { Err(ApiError::bad_request("invalid id")) }
+    if AssistantStore::valid_id(id) {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request("invalid id"))
+    }
 }
 
 async fn list(State(s): State<AppState>) -> ApiResult<Json<Value>> {
@@ -67,14 +77,20 @@ async fn list(State(s): State<AppState>) -> ApiResult<Json<Value>> {
 /// The assistant plus `index` (`IndexStatus`: chunk count, stale flag).
 async fn get_one(State(s): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     check_id(&id)?;
-    let a = s.assistants.get(&id)?.ok_or_else(|| ApiError::not_found("assistant not found"))?;
+    let a = s
+        .assistants
+        .get(&id)?
+        .ok_or_else(|| ApiError::not_found("assistant not found"))?;
     let status = s.assistants.index_status(&id).await.map_err(map_err)?;
     let mut v = serde_json::to_value(a)?;
     v["index"] = serde_json::to_value(status)?;
     Ok(Json(v))
 }
 
-async fn create(State(s): State<AppState>, Json(body): Json<NewAssistant>) -> ApiResult<Json<Value>> {
+async fn create(
+    State(s): State<AppState>,
+    Json(body): Json<NewAssistant>,
+) -> ApiResult<Json<Value>> {
     if body.name.trim().is_empty() {
         return Err(ApiError::bad_request("name is required"));
     }
@@ -106,7 +122,10 @@ async fn doc_text(
 ) -> ApiResult<Json<Value>> {
     check_id(&id)?;
     check_id(&doc_id)?;
-    let text = s.assistants.doc_text(&id, &doc_id)?.ok_or_else(|| ApiError::not_found("document not found"))?;
+    let text = s
+        .assistants
+        .doc_text(&id, &doc_id)?
+        .ok_or_else(|| ApiError::not_found("document not found"))?;
     Ok(Json(json!({ "text": text })))
 }
 
@@ -115,7 +134,10 @@ async fn remove_doc(
     Path((id, doc_id)): Path<(String, String)>,
 ) -> ApiResult<Json<Value>> {
     check_id(&id)?;
-    s.assistants.remove_document(&id, &doc_id).await.map_err(map_err)?;
+    s.assistants
+        .remove_document(&id, &doc_id)
+        .await
+        .map_err(map_err)?;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -131,7 +153,10 @@ fn ndjson_channel() -> (mpsc::UnboundedSender<Value>, Response) {
         Some((Ok::<_, std::io::Error>(line), rx))
     });
     let resp = (
-        [(header::CONTENT_TYPE, "application/x-ndjson"), (header::CACHE_CONTROL, "no-cache")],
+        [
+            (header::CONTENT_TYPE, "application/x-ndjson"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
         Body::from_stream(stream),
     )
         .into_response();
@@ -162,7 +187,11 @@ struct NoteBody {
 /// Multipart file(s) (any field with a file name) or JSON `{name, text}` for a
 /// note. Files are indexed one after another; each ends with `{doc}` or
 /// `{error, name}`.
-async fn add_docs(State(s): State<AppState>, Path(id): Path<String>, req: Request) -> ApiResult<Response> {
+async fn add_docs(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    req: Request,
+) -> ApiResult<Response> {
     check_id(&id)?;
     if s.assistants.get(&id)?.is_none() {
         return Err(ApiError::not_found("assistant not found"));
@@ -175,13 +204,26 @@ async fn add_docs(State(s): State<AppState>, Path(id): Path<String>, req: Reques
 
     let mut inputs: Vec<(String, DocInput)> = Vec::new();
     if is_multipart {
-        let mut mp = Multipart::from_request(req, &s).await.map_err(|e| ApiError::bad_request(e.body_text()))?;
-        while let Some(field) = mp.next_field().await.map_err(|e| ApiError::bad_request(e.body_text()))? {
-            let Some(name) = field.file_name().map(str::to_string) else { continue };
+        let mut mp = Multipart::from_request(req, &s)
+            .await
+            .map_err(|e| ApiError::bad_request(e.body_text()))?;
+        while let Some(field) = mp
+            .next_field()
+            .await
+            .map_err(|e| ApiError::bad_request(e.body_text()))?
+        {
+            let Some(name) = field.file_name().map(str::to_string) else {
+                continue;
+            };
             if !extract::is_supported(&name) {
-                return Err(ApiError::bad_request(format!("unsupported file type: {name}")));
+                return Err(ApiError::bad_request(format!(
+                    "unsupported file type: {name}"
+                )));
             }
-            let bytes = field.bytes().await.map_err(|e| ApiError::bad_request(e.body_text()))?;
+            let bytes = field
+                .bytes()
+                .await
+                .map_err(|e| ApiError::bad_request(e.body_text()))?;
             inputs.push((name, DocInput::File(bytes.to_vec())));
         }
         if inputs.is_empty() {

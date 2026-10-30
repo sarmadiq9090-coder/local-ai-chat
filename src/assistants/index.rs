@@ -79,7 +79,13 @@ pub fn keyword_boost(query_kw: &HashSet<String>, chunk_text: &str) -> f32 {
 
 /// Indices into `index.chunks` with their combined score, best first:
 /// `score = cosine + keyword_boost`, keeping at most `k` with `score >= min_score`.
-pub fn top_k(index: &Index, query_vec: &[f32], query: &str, k: usize, min_score: f32) -> Vec<(usize, f32)> {
+pub fn top_k(
+    index: &Index,
+    query_vec: &[f32],
+    query: &str,
+    k: usize,
+    min_score: f32,
+) -> Vec<(usize, f32)> {
     let qkw = keywords(query);
     let mut scored: Vec<(usize, f32)> = index
         .chunks
@@ -102,7 +108,12 @@ mod tests {
 
     fn chunk(text: &str, mut vec: Vec<f32>) -> IndexedChunk {
         normalize(&mut vec);
-        IndexedChunk { doc_id: "d".into(), i: 0, text: text.into(), vec }
+        IndexedChunk {
+            doc_id: "d".into(),
+            i: 0,
+            text: text.into(),
+            vec,
+        }
     }
 
     fn index() -> Index {

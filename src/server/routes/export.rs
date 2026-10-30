@@ -31,7 +31,13 @@ async fn export(State(s): State<AppState>, Json(req): Json<ExportReq>) -> ApiRes
 fn sanitize_filename(raw: &str) -> String {
     let mut name: String = raw
         .chars()
-        .map(|c| if c.is_alphanumeric() || " -_.".contains(c) { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || " -_.".contains(c) {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect::<String>()
         .trim()
         .trim_matches('.')

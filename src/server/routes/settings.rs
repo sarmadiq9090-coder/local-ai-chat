@@ -14,7 +14,10 @@ async fn get_settings(State(s): State<AppState>) -> Json<Settings> {
     Json(s.settings.read().await.clone())
 }
 
-async fn put_settings(State(s): State<AppState>, Json(new): Json<Settings>) -> ApiResult<Json<Settings>> {
+async fn put_settings(
+    State(s): State<AppState>,
+    Json(new): Json<Settings>,
+) -> ApiResult<Json<Settings>> {
     let new = new.sanitized();
     // Hold the lock across save + assign so disk and memory never disagree.
     let mut current = s.settings.write().await;

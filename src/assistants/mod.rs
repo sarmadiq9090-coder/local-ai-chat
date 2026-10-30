@@ -108,7 +108,9 @@ impl AssistantStore {
         let mut out = Vec::new();
         for entry in entries {
             let entry = entry?;
-            let Some(id) = entry.file_name().to_str().map(str::to_string) else { continue };
+            let Some(id) = entry.file_name().to_str().map(str::to_string) else {
+                continue;
+            };
             if !Self::valid_id(&id) {
                 continue;
             }
@@ -155,7 +157,10 @@ impl AssistantStore {
         let a = Assistant {
             id: new_id(),
             name: name.to_string(),
-            icon: new.icon.filter(|s| !s.trim().is_empty()).unwrap_or_else(|| Assistant::default().icon),
+            icon: new
+                .icon
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| Assistant::default().icon),
             description: new.description.unwrap_or_default(),
             instructions: new.instructions.unwrap_or_default(),
             model: new.model.filter(|s| !s.trim().is_empty()),
@@ -235,7 +240,11 @@ impl AssistantStore {
         })
         .await??;
         let idx = Arc::new(idx);
-        self.inner.cache.write().await.insert(id.to_string(), idx.clone());
+        self.inner
+            .cache
+            .write()
+            .await
+            .insert(id.to_string(), idx.clone());
         Ok(idx)
     }
 
@@ -243,7 +252,8 @@ impl AssistantStore {
         let path = self.index_file(id);
         let idx = Arc::new(idx);
         let to_write = idx.clone();
-        tokio::task::spawn_blocking(move || write_atomic(&path, &serde_json::to_vec(&*to_write)?)).await??;
+        tokio::task::spawn_blocking(move || write_atomic(&path, &serde_json::to_vec(&*to_write)?))
+            .await??;
         self.inner.cache.write().await.insert(id.to_string(), idx);
         Ok(())
     }
@@ -253,7 +263,11 @@ impl AssistantStore {
         let a = self.require(id)?;
         let idx = self.load_index(id).await?;
         Ok(IndexStatus {
-            embed_model: if idx.chunks.is_empty() { a.embed_model.clone() } else { idx.embed_model.clone() },
+            embed_model: if idx.chunks.is_empty() {
+                a.embed_model.clone()
+            } else {
+                idx.embed_model.clone()
+            },
             dim: idx.dim,
             chunks: idx.chunks.len(),
             stale: is_stale(&a, &idx),
@@ -270,10 +284,18 @@ impl AssistantStore {
     ) -> anyhow::Result<Vec<Vec<f32>>> {
         let total = texts.len();
         let mut out = Vec::with_capacity(total);
-        progress(Progress { status: "embedding", done: 0, total });
+        progress(Progress {
+            status: "embedding",
+            done: 0,
+            total,
+        });
         for batch in texts.chunks(embed::BATCH_SIZE) {
             out.extend(embed::embed(&self.inner.http, ollama_url, model, batch).await?);
-            progress(Progress { status: "embedding", done: out.len(), total });
+            progress(Progress {
+                status: "embedding",
+                done: out.len(),
+                total,
+            });
         }
         Ok(out)
     }
@@ -311,7 +333,11 @@ impl AssistantStore {
             bail!("document name is required");
         }
 
-        progress(Progress { status: "extracting", done: 0, total: 1 });
+        progress(Progress {
+            status: "extracting",
+            done: 0,
+            total: 1,
+        });
         let (kind, size, text) = match input {
             DocInput::File(bytes) => {
                 let size = bytes.len() as u64;
@@ -322,14 +348,28 @@ impl AssistantStore {
         if text.is_empty() {
             bail!("no text found in {name}");
         }
-        progress(Progress { status: "extracting", done: 1, total: 1 });
+        progress(Progress {
+            status: "extracting",
+            done: 1,
+            total: 1,
+        });
 
-        let doc = DocMeta { id: new_id(), name: name.to_string(), kind, size, chunks: 0, added_at: now_ms(), ..Default::default() };
+        let doc = DocMeta {
+            id: new_id(),
+            name: name.to_string(),
+            kind,
+            size,
+            chunks: 0,
+            added_at: now_ms(),
+            ..Default::default()
+        };
         let doc_path = self.doc_file(id, &doc.id);
         std::fs::create_dir_all(doc_path.parent().expect("docs dir"))?;
         write_atomic(&doc_path, text.as_bytes())?;
 
-        let result = self.index_new_doc(ollama_url, &mut a, doc, &text, &mut progress).await;
+        let result = self
+            .index_new_doc(ollama_url, &mut a, doc, &text, &mut progress)
+            .await;
         if result.is_err() {
             let _ = std::fs::remove_file(&doc_path);
         }
@@ -356,23 +396,49 @@ impl AssistantStore {
         }
 
         let pieces = chunk::chunk(text);
-        let vecs = self.embed_all(ollama_url, &a.embed_model, &pieces, progress).await?;
-        progress(Progress { status: "saving", done: 0, total: 1 });
+        let vecs = self
+            .embed_all(ollama_url, &a.embed_model, &pieces, progress)
+            .await?;
+        progress(Progress {
+            status: "saving",
+            done: 0,
+            total: 1,
+        });
         let dim = vecs.first().map_or(idx.dim, Vec::len);
         if idx.dim != 0 && !idx.chunks.is_empty() && dim != idx.dim {
-            bail!("embedding size changed ({} → {dim}); re-index the knowledge base", idx.dim);
+            bail!(
+                "embedding size changed ({} → {dim}); re-index the knowledge base",
+                idx.dim
+            );
         }
-        let mut new_idx = Index { embed_model: a.embed_model.clone(), dim, chunks: idx.chunks.clone() };
-        new_idx.chunks.extend(pieces.into_iter().zip(vecs).enumerate().map(|(i, (text, vec))| {
-            IndexedChunk { doc_id: doc.id.clone(), i, text, vec }
-        }));
+        let mut new_idx = Index {
+            embed_model: a.embed_model.clone(),
+            dim,
+            chunks: idx.chunks.clone(),
+        };
+        new_idx.chunks.extend(
+            pieces
+                .into_iter()
+                .zip(vecs)
+                .enumerate()
+                .map(|(i, (text, vec))| IndexedChunk {
+                    doc_id: doc.id.clone(),
+                    i,
+                    text,
+                    vec,
+                }),
+        );
         doc.chunks = new_idx.chunks.iter().filter(|c| c.doc_id == doc.id).count();
         self.save_index(&a.id, new_idx).await?;
 
         a.docs.push(doc.clone());
         a.updated_at = now_ms();
         self.write(a)?;
-        progress(Progress { status: "saving", done: 1, total: 1 });
+        progress(Progress {
+            status: "saving",
+            done: 1,
+            total: 1,
+        });
         Ok(doc)
     }
 
@@ -387,8 +453,21 @@ impl AssistantStore {
         a.docs.remove(pos);
         let idx = self.load_index(id).await?;
         if idx.chunks.iter().any(|c| c.doc_id == doc_id) {
-            let chunks = idx.chunks.iter().filter(|c| c.doc_id != doc_id).cloned().collect();
-            self.save_index(id, Index { embed_model: idx.embed_model.clone(), dim: idx.dim, chunks }).await?;
+            let chunks = idx
+                .chunks
+                .iter()
+                .filter(|c| c.doc_id != doc_id)
+                .cloned()
+                .collect();
+            self.save_index(
+                id,
+                Index {
+                    embed_model: idx.embed_model.clone(),
+                    dim: idx.dim,
+                    chunks,
+                },
+            )
+            .await?;
         }
         a.updated_at = now_ms();
         self.write(&a)?;
@@ -409,7 +488,8 @@ impl AssistantStore {
         let lock = self.lock_for(id);
         let _guard = lock.lock().await;
         let mut a = self.require(id)?;
-        self.reindex_locked(ollama_url, &mut a, &mut progress).await?;
+        self.reindex_locked(ollama_url, &mut a, &mut progress)
+            .await?;
         Ok(a)
     }
 
@@ -432,22 +512,45 @@ impl AssistantStore {
                 texts.push(piece);
             }
         }
-        let vecs = self.embed_all(ollama_url, &a.embed_model, &texts, progress).await?;
-        progress(Progress { status: "saving", done: 0, total: 1 });
+        let vecs = self
+            .embed_all(ollama_url, &a.embed_model, &texts, progress)
+            .await?;
+        progress(Progress {
+            status: "saving",
+            done: 0,
+            total: 1,
+        });
         let dim = vecs.first().map_or(0, Vec::len);
         let chunks: Vec<IndexedChunk> = owners
             .into_iter()
             .zip(texts)
             .zip(vecs)
-            .map(|(((doc_id, i), text), vec)| IndexedChunk { doc_id, i, text, vec })
+            .map(|(((doc_id, i), text), vec)| IndexedChunk {
+                doc_id,
+                i,
+                text,
+                vec,
+            })
             .collect();
         for doc in &mut a.docs {
             doc.chunks = chunks.iter().filter(|c| c.doc_id == doc.id).count();
         }
-        self.save_index(&a.id, Index { embed_model: a.embed_model.clone(), dim, chunks }).await?;
+        self.save_index(
+            &a.id,
+            Index {
+                embed_model: a.embed_model.clone(),
+                dim,
+                chunks,
+            },
+        )
+        .await?;
         a.updated_at = now_ms();
         self.write(a)?;
-        progress(Progress { status: "saving", done: 1, total: 1 });
+        progress(Progress {
+            status: "saving",
+            done: 1,
+            total: 1,
+        });
         Ok(())
     }
 
@@ -476,20 +579,36 @@ impl AssistantStore {
             );
         }
         let k = k.unwrap_or(index::DEFAULT_K).clamp(1, 50);
-        let qvec = embed::embed(&self.inner.http, ollama_url, &idx.embed_model, &[query.to_string()])
-            .await?
-            .pop()
-            .unwrap_or_default();
-        let names: HashMap<&str, &str> = a.docs.iter().map(|d| (d.id.as_str(), d.name.as_str())).collect();
-        Ok(index::top_k(&idx, &qvec, query, usize::MAX, index::MIN_SCORE)
-            .into_iter()
-            .filter_map(|(i, score)| {
-                let c = &idx.chunks[i];
-                let doc_name = names.get(c.doc_id.as_str())?; // skip orphaned chunks
-                Some(SearchResult { doc_id: c.doc_id.clone(), doc_name: doc_name.to_string(), text: c.text.clone(), score })
-            })
-            .take(k)
-            .collect())
+        let qvec = embed::embed(
+            &self.inner.http,
+            ollama_url,
+            &idx.embed_model,
+            &[query.to_string()],
+        )
+        .await?
+        .pop()
+        .unwrap_or_default();
+        let names: HashMap<&str, &str> = a
+            .docs
+            .iter()
+            .map(|d| (d.id.as_str(), d.name.as_str()))
+            .collect();
+        Ok(
+            index::top_k(&idx, &qvec, query, usize::MAX, index::MIN_SCORE)
+                .into_iter()
+                .filter_map(|(i, score)| {
+                    let c = &idx.chunks[i];
+                    let doc_name = names.get(c.doc_id.as_str())?; // skip orphaned chunks
+                    Some(SearchResult {
+                        doc_id: c.doc_id.clone(),
+                        doc_name: doc_name.to_string(),
+                        text: c.text.clone(),
+                        score,
+                    })
+                })
+                .take(k)
+                .collect(),
+        )
     }
 }
 
@@ -503,11 +622,15 @@ fn is_stale(a: &Assistant, idx: &Index) -> bool {
     for c in &idx.chunks {
         *counts.entry(c.doc_id.as_str()).or_default() += 1;
     }
-    a.docs.iter().any(|d| counts.get(d.id.as_str()).copied().unwrap_or(0) != d.chunks)
+    a.docs
+        .iter()
+        .any(|d| counts.get(d.id.as_str()).copied().unwrap_or(0) != d.chunks)
 }
 
 fn clean_model(m: Option<String>) -> String {
-    m.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| DEFAULT_EMBED_MODEL.into())
+    m.map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| DEFAULT_EMBED_MODEL.into())
 }
 
 fn new_id() -> String {

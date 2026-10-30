@@ -45,7 +45,9 @@ impl Ollama {
         if self.version(base_url).await.is_some() {
             return true;
         }
-        let Some(exe) = find_ollama_exe() else { return false };
+        let Some(exe) = find_ollama_exe() else {
+            return false;
+        };
         if spawn_detached(&exe, &["serve"]).is_err() {
             return false;
         }
@@ -64,12 +66,18 @@ fn find_ollama_exe() -> Option<PathBuf> {
         dirs::data_local_dir().map(|d| d.join(r"Programs\Ollama\ollama.exe")),
         std::env::var_os("ProgramFiles").map(|p| PathBuf::from(p).join(r"Ollama\ollama.exe")),
     ];
-    candidates.into_iter().flatten().find(|p| p.exists()).or_else(|| {
-        // Fall back to PATH lookup.
-        std::env::var_os("PATH").and_then(|paths| {
-            std::env::split_paths(&paths).map(|d| d.join("ollama.exe")).find(|p| p.exists())
+    candidates
+        .into_iter()
+        .flatten()
+        .find(|p| p.exists())
+        .or_else(|| {
+            // Fall back to PATH lookup.
+            std::env::var_os("PATH").and_then(|paths| {
+                std::env::split_paths(&paths)
+                    .map(|d| d.join("ollama.exe"))
+                    .find(|p| p.exists())
+            })
         })
-    })
 }
 
 /// Spawn a process with no console window that outlives this app.

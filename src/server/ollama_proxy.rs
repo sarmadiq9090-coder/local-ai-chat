@@ -47,10 +47,14 @@ async fn forward(
     }
 
     let upstream = req.send().await.map_err(|e| {
-        ApiError::new(StatusCode::BAD_GATEWAY, format!("Ollama is not reachable / Ollama غير متاح: {e}"))
+        ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            format!("Ollama is not reachable / Ollama غير متاح: {e}"),
+        )
     })?;
 
-    let status = StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    let status =
+        StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     let content_type = upstream
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
@@ -61,7 +65,10 @@ async fn forward(
 
     Ok((
         status,
-        [(header::CONTENT_TYPE, content_type), (header::CACHE_CONTROL, "no-cache".into())],
+        [
+            (header::CONTENT_TYPE, content_type),
+            (header::CACHE_CONTROL, "no-cache".into()),
+        ],
         Body::from_stream(stream),
     )
         .into_response())

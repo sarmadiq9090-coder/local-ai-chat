@@ -43,7 +43,9 @@ impl AppState {
     pub async fn system_info(&self) -> SystemInfo {
         self.system
             .get_or_init(|| async {
-                tokio::task::spawn_blocking(crate::system::probe).await.unwrap_or_default()
+                tokio::task::spawn_blocking(crate::system::probe)
+                    .await
+                    .unwrap_or_default()
             })
             .await
             .clone()
@@ -73,7 +75,9 @@ pub async fn run(paths: Paths, port: u16, port_tx: mpsc::Sender<u16>) -> anyhow:
     // Warm the hardware probe so the model manager opens instantly.
     {
         let state = state.clone();
-        tokio::spawn(async move { state.system_info().await; });
+        tokio::spawn(async move {
+            state.system_info().await;
+        });
     }
 
     // Port 0 = let Windows pick a free port; bound to loopback only.
@@ -87,7 +91,10 @@ pub async fn run(paths: Paths, port: u16, port_tx: mpsc::Sender<u16>) -> anyhow:
         // Chats resend attachments with the whole history; the 2 MB default is too small.
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
         // Reject requests from other websites / DNS rebinding (see guard.rs).
-        .layer(middleware::from_fn_with_state(guard::BoundPort(port), guard::check))
+        .layer(middleware::from_fn_with_state(
+            guard::BoundPort(port),
+            guard::check,
+        ))
         .with_state(state);
 
     port_tx.send(port)?;

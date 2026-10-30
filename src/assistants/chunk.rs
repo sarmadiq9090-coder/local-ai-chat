@@ -58,12 +58,17 @@ pub fn chunk_with(text: &str, size: usize, overlap: usize) -> Vec<String> {
 fn find_break(chars: &[char], min: usize, limit: usize) -> usize {
     let window = min..limit;
     // 1. Paragraph break: cut right after "\n\n".
-    if let Some(i) = window.clone().rev().find(|&i| i >= 1 && chars[i] == '\n' && chars[i - 1] == '\n') {
+    if let Some(i) = window
+        .clone()
+        .rev()
+        .find(|&i| i >= 1 && chars[i] == '\n' && chars[i - 1] == '\n')
+    {
         return i + 1;
     }
     // 2. Sentence end followed by whitespace (so "3.14" or "a.b" don't split).
     if let Some(i) = window.clone().rev().find(|&i| {
-        is_sentence_end(chars[i]) && (chars[i] == '\n' || chars.get(i + 1).is_none_or(|c| c.is_whitespace()))
+        is_sentence_end(chars[i])
+            && (chars[i] == '\n' || chars.get(i + 1).is_none_or(|c| c.is_whitespace()))
     }) {
         return i + 1;
     }
@@ -101,7 +106,11 @@ mod tests {
         let chunks = chunk(&text);
         assert!(chunks.len() > 4);
         for c in &chunks {
-            assert!(c.chars().count() <= CHUNK_SIZE, "too long: {}", c.chars().count());
+            assert!(
+                c.chars().count() <= CHUNK_SIZE,
+                "too long: {}",
+                c.chars().count()
+            );
             // Cut at sentence ends.
             assert!(c.ends_with('.'), "chunk should end at a sentence: {c:?}");
         }
@@ -115,7 +124,10 @@ mod tests {
         let chunks = chunk_with(&text, 200, 50);
         for pair in chunks.windows(2) {
             let first_word_next = pair[1].split_whitespace().next().unwrap();
-            assert!(pair[0].contains(first_word_next), "no overlap between {pair:?}");
+            assert!(
+                pair[0].contains(first_word_next),
+                "no overlap between {pair:?}"
+            );
             // Overlap starts at a word boundary.
             assert!(first_word_next.starts_with("word"));
         }
@@ -138,7 +150,10 @@ mod tests {
         assert!(chunks.len() > 1);
         for c in &chunks {
             assert!(c.chars().count() <= CHUNK_SIZE);
-            assert!(c.ends_with('؟'), "should cut after Arabic question mark: {c:?}");
+            assert!(
+                c.ends_with('؟'),
+                "should cut after Arabic question mark: {c:?}"
+            );
         }
         let urdu = "یہ ایک جملہ ہے۔ ".repeat(100);
         assert!(chunk(&urdu).iter().all(|c| c.ends_with('۔')));

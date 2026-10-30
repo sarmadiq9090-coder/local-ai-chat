@@ -59,15 +59,30 @@ mod tests {
     #[test]
     fn accepts_own_origin_and_plain_requests() {
         assert!(allowed(&headers(Some("127.0.0.1:8790"), None), 8790));
-        assert!(allowed(&headers(Some("localhost:8790"), Some("http://localhost:8790")), 8790));
-        assert!(allowed(&headers(Some("127.0.0.1:8790"), Some("http://127.0.0.1:8790")), 8790));
+        assert!(allowed(
+            &headers(Some("localhost:8790"), Some("http://localhost:8790")),
+            8790
+        ));
+        assert!(allowed(
+            &headers(Some("127.0.0.1:8790"), Some("http://127.0.0.1:8790")),
+            8790
+        ));
     }
 
     #[test]
     fn rejects_foreign_sites_and_rebinding() {
-        assert!(!allowed(&headers(Some("127.0.0.1:8790"), Some("https://evil.example")), 8790));
-        assert!(!allowed(&headers(Some("127.0.0.1:8790"), Some("http://localhost:3000")), 8790));
-        assert!(!allowed(&headers(Some("127.0.0.1:8790"), Some("null")), 8790));
+        assert!(!allowed(
+            &headers(Some("127.0.0.1:8790"), Some("https://evil.example")),
+            8790
+        ));
+        assert!(!allowed(
+            &headers(Some("127.0.0.1:8790"), Some("http://localhost:3000")),
+            8790
+        ));
+        assert!(!allowed(
+            &headers(Some("127.0.0.1:8790"), Some("null")),
+            8790
+        ));
         assert!(!allowed(&headers(Some("evil.example:8790"), None), 8790));
         assert!(!allowed(&headers(None, None), 8790));
     }

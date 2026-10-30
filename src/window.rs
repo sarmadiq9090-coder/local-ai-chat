@@ -49,7 +49,11 @@ pub fn run(url: &str, paths: &Paths) -> anyhow::Result<()> {
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
         match event {
-            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } | Event::UserEvent(()) => {
+            Event::WindowEvent {
+                event: WindowEvent::CloseRequested,
+                ..
+            }
+            | Event::UserEvent(()) => {
                 *control_flow = ControlFlow::Exit;
             }
             _ => {}

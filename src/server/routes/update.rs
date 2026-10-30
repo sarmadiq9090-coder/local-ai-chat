@@ -97,13 +97,19 @@ async fn run_check(force: bool) -> (CheckResponse, Option<ReleaseInfo>) {
         Err(e) => resp.error = Some(format!("{e:#}")),
     }
     // Errors are cached too (avoids hammering GitHub), but a forced check retries.
-    *CACHE.lock().unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), resp.clone(), release.clone()));
+    *CACHE.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some((Instant::now(), resp.clone(), release.clone()));
     (resp, release)
 }
 
 async fn check(Query(q): Query<CheckQuery>) -> Json<CheckResponse> {
     let mut resp = if flag(&q.local) {
-        CACHE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|c| c.1.clone()).unwrap_or_else(empty_response)
+        CACHE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|c| c.1.clone())
+            .unwrap_or_else(empty_response)
     } else {
         run_check(flag(&q.force)).await.0
     };
@@ -121,7 +127,9 @@ async fn install() -> Response {
     let (tx, rx) = mpsc::unbounded_channel::<Bytes>();
 
     if INSTALLING.swap(true, Ordering::SeqCst) {
-        let _ = tx.send(line(json!({ "error": "an update is already being installed" })));
+        let _ = tx.send(line(
+            json!({ "error": "an update is already being installed" }),
+        ));
     } else {
         tokio::spawn(async move {
             let release = match run_check(false).await {
@@ -164,7 +172,10 @@ async fn install() -> Response {
         rx.recv().await.map(|b| (Ok::<_, std::io::Error>(b), rx))
     });
     (
-        [(header::CONTENT_TYPE, "application/x-ndjson"), (header::CACHE_CONTROL, "no-cache")],
+        [
+            (header::CONTENT_TYPE, "application/x-ndjson"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
         Body::from_stream(stream),
     )
         .into_response()

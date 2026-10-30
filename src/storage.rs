@@ -23,7 +23,11 @@ impl ConversationMeta {
     fn from_value(v: &Value) -> Option<Self> {
         Some(Self {
             id: v.get("id")?.as_str()?.to_string(),
-            title: v.get("title").and_then(Value::as_str).unwrap_or_default().to_string(),
+            title: v
+                .get("title")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
             model: v.get("model").and_then(Value::as_str).map(str::to_string),
             updated_at: v.get("updated_at").and_then(Value::as_i64).unwrap_or(0),
         })
@@ -44,7 +48,9 @@ impl ConversationStore {
     pub fn valid_id(id: &str) -> bool {
         !id.is_empty()
             && id.len() <= 64
-            && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            && id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
     }
 
     fn file(&self, id: &str) -> PathBuf {
@@ -56,7 +62,10 @@ impl ConversationStore {
         for entry in std::fs::read_dir(&self.dir)? {
             let path = entry?.path();
             if path.extension().is_some_and(|e| e == "json") {
-                if let Some(meta) = read_json(&path).as_ref().and_then(ConversationMeta::from_value) {
+                if let Some(meta) = read_json(&path)
+                    .as_ref()
+                    .and_then(ConversationMeta::from_value)
+                {
                     out.push(meta);
                 }
             }

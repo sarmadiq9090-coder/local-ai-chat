@@ -104,7 +104,9 @@ pub struct AssistantPatch {
     pub embed_model: Option<String>,
 }
 
-fn double_option<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<String>>, D::Error> {
+fn double_option<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<Option<String>>, D::Error> {
     Option::<String>::deserialize(d).map(Some)
 }
 

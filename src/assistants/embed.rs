@@ -62,9 +62,17 @@ pub async fn embed(
         bail!("embedding failed ({status}): {msg}");
     }
 
-    let mut out = resp.json::<Resp>().await.context("invalid /api/embed response")?.embeddings;
+    let mut out = resp
+        .json::<Resp>()
+        .await
+        .context("invalid /api/embed response")?
+        .embeddings;
     if out.len() != inputs.len() {
-        bail!("embedding returned {} vectors for {} inputs", out.len(), inputs.len());
+        bail!(
+            "embedding returned {} vectors for {} inputs",
+            out.len(),
+            inputs.len()
+        );
     }
     let dim = out[0].len();
     if dim == 0 || out.iter().any(|v| v.len() != dim) {
@@ -124,9 +132,19 @@ mod tests {
         let same = dot(&vecs[0], &vecs[1]);
         let diff = dot(&vecs[0], &vecs[2]);
         println!("dim={} ar~en={same:.3} ar~recipe={diff:.3}", vecs[0].len());
-        assert!(same > diff, "cross-lingual match should beat an unrelated sentence");
+        assert!(
+            same > diff,
+            "cross-lingual match should beat an unrelated sentence"
+        );
 
-        let err = embed(&http, &url, "no-such-embed-model-xyz", &inputs[..1].to_vec()).await.unwrap_err();
+        let err = embed(
+            &http,
+            &url,
+            "no-such-embed-model-xyz",
+            &inputs[..1].to_vec(),
+        )
+        .await
+        .unwrap_err();
         assert!(err.downcast_ref::<ModelMissing>().is_some(), "{err:#}");
     }
 }
