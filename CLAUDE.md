@@ -24,20 +24,24 @@ cargo check && cargo test
   (`server/guard.rs`), so open the UI via one of those exact hosts.
 - The app holds a **single-instance mutex**: launching the exe twice just focuses the first
   window. Test with `--serve <port>` (no window, no mutex), never by launching the exe twice.
-- Data: `%APPDATA%\LocalAiChat\` (settings.json, conversations\*.json). Exports: `Documents\LocalAiChat\`.
+- Data: `%APPDATA%\LocalAiChat\` (settings.json, conversations\*.json, assistants\{id}\ with
+  assistant.json, docs\*.txt, index.json). Exports: `Documents\LocalAiChat\`.
 
 ## Folder map
 
 ```
 src/
   main.rs  config.rs  error.rs  single_instance.rs  window.rs  ollama.rs  storage.rs  system.rs
+  update.rs           auto-update from GitHub Releases (check, download + sha256 verify, exe swap)
+  assistants/         custom assistants + knowledge base (RAG): extract, chunk, embed, index, types
   server/
     mod.rs            AppState + router assembly (/api/app, /api/ollama, static UI)
     assets.rs         embedded ui/ files
+    guard.rs          rejects requests whose Host/Origin isn't this server (CSRF / DNS rebinding)
     ollama_proxy.rs   /api/ollama/* streaming passthrough to Ollama
     routes/
       mod.rs          merges one router per feature (one `mod` + one `.merge` line each)
-      status.rs settings.rs conversations.rs export.rs system.rs
+      status.rs settings.rs conversations.rs export.rs system.rs assistants.rs update.rs
 ui/
   index.html          markup shell + <link> per feature stylesheet
   main.js             bootstrap: translateDom, icons, then init()/start() of every feature, Esc chain
@@ -45,7 +49,7 @@ ui/
                       strings.js (shared strings) base.css (tokens, reset, shell, buttons, forms, modal, toast)
   features/
     index.js          the ONLY list of features (order = init order and Esc priority)
-    chat/ sidebar/ models/ settings/ preview/ status/ exporter/ code/
+    chat/ sidebar/ models/ settings/ preview/ status/ exporter/ code/ assistants/ update/
                       each: <name>.js (default export = feature object), <name>.css, strings.js
   vendor/             highlight.min.js + license (do not edit)
 ```

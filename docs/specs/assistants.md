@@ -23,9 +23,10 @@ Ids: same safe charset rule as conversations (`ConversationStore::valid_id`).
 - Chunking: ~800 characters with ~150 overlap, split preferably on paragraph/sentence boundaries (Arabic `.؟!` and Latin `.?!` and newlines).
 - Embeddings: Ollama `POST /api/embed` `{ model, input: [chunks...] }` in batches of 32. Default embed model **`bge-m3`** (multilingual, strong Arabic, ~1.2 GB). If it isn't installed, the UI offers a one-click pull (reuse the models feature's pull/progress).
 - Changing an assistant's embed model ⇒ full re-index.
+- Limits, checked before embedding: 5 MB of extracted text per document (`MAX_DOC_TEXT_BYTES`) and 20,000 chunks per assistant (`MAX_CHUNKS`); exceeding either fails with a clear "too large" error (400 / `{error}` line).
 
 ## Retrieval (per question)
-- Embed the user's question → cosine similarity vs all chunks → top-k (default 5) with a minimum score (default 0.35, tune); also a cheap keyword-overlap boost so exact names/numbers still match.
+- Embed the user's question → cosine similarity vs all chunks → top-k (default 5) with a minimum score (`index::MIN_SCORE` = 0.5, tuned on `bge-m3`); also a cheap keyword-overlap boost so exact names/numbers still match.
 - If strict mode and nothing passes the threshold → the backend still returns `[]`; the UI sends the prompt with an empty context so the model replies with the "not in my knowledge" sentence (instructions enforce it).
 
 ## Prompt assembly (UI side, like normal chat)

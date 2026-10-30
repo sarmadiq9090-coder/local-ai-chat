@@ -51,6 +51,17 @@ Local AI Chat is a local, single-user desktop app. Useful context:
 - **Navigation lock.** The app window only navigates within its own local
   origin; external links are handed to the default browser.
 
+### Release integrity
+
+The built-in updater downloads `local-ai-chat.exe` from the latest GitHub
+release over HTTPS only, caps its size, and checks it against the
+`local-ai-chat.exe.sha256` asset of the same release before replacing
+anything; on any mismatch the current exe is left untouched. That checksum
+protects **integrity** (a corrupted or truncated download), **not
+authorship**: both files come from the same release, so someone able to
+publish a release on this repository could publish a matching checksum too.
+Release signing (minisign and/or Authenticode) is on the roadmap.
+
 ### In scope
 
 - Ways for a **web page in the user's normal browser** (or another
@@ -60,8 +71,8 @@ Local AI Chat is a local, single-user desktop app. Useful context:
   script execution in the app's origin (XSS).
 - Path traversal or arbitrary file read/write through API endpoints
   (conversation IDs, export, save-to-file, assistants' knowledge files).
-- Problems in the update mechanism once it ships (downloading or running an
-  executable that is not the verified release asset).
+- Problems in the update mechanism (downloading or running an executable that
+  is not the verified release asset).
 
 ### Out of scope
 

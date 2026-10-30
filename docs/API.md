@@ -1,7 +1,9 @@
 # API contract (backend ⇄ UI)
 
 All endpoints are served by the Rust backend on the same origin as the UI (`http://127.0.0.1:<random port>`).
-JSON in / JSON out unless noted. Errors: non-2xx status with body `{"error": "message"}`.
+JSON in / JSON out unless noted. Errors: non-2xx status with body `{"error": "message"}` — including
+request rejections under `/api/app` (malformed JSON → 400, wrong field types → 422, missing
+`Content-Type` → 415, bad path/query → 400, body over 64 MB → 413, wrong method → 405).
 
 ## App endpoints (`/api/app/...`)
 
@@ -18,7 +20,7 @@ Implemented in `src/server/routes/<feature>.rs` (one file per feature, merged in
 | GET | `/api/app/conversations/{id}` | – | `Conversation` (404 if missing) |
 | PUT | `/api/app/conversations/{id}` | `Conversation` | `{ "ok": true }` — create or replace |
 | DELETE | `/api/app/conversations/{id}` | – | `{ "ok": true }` |
-| POST | `/api/app/export` | `{ "filename": string, "content": string }` | `{ "path": string }` — saved to `Documents\LocalAiChat\` and revealed in Explorer |
+| POST | `/api/app/export` | `{ "filename": string, "content": string }` | `{ "path": string }` — saved to `Documents\LocalAiChat\` and revealed in Explorer; an existing file is never overwritten (`name (2).md`, `name (3).md`…) |
 
 ## Ollama passthrough (`/api/ollama/...`)
 
@@ -78,6 +80,10 @@ Implemented in `src/server/routes/assistants.rs` on top of `src/assistants/` (sp
 Stored under `%APPDATA%\LocalAiChat\assistants\{id}\` (`assistant.json`, `docs/{doc_id}.txt`, `index.json`).
 Errors: unknown assistant/document → **404**; invalid id / empty name / bad upload → **400**;
 embedding model not installed in Ollama → **424** `{ "error": string, "missing_model": string }`.
+Limits (checked before anything is embedded): at most **5 MB of extracted text per document** and
+**20,000 chunks per assistant**. An oversized note is rejected with **400** before streaming; an
+oversized file (known only after extraction) or a full knowledge base ends that document's stream
+with `{ error: "document too large: …" | "knowledge base too large: …", name }`.
 
 | Method | Path | Body | Response |
 |---|---|---|---|
@@ -126,16 +132,18 @@ the numbered passages given to the model, `n` matches the `[n]` citations).
 Implemented in `src/server/routes/update.rs` + `src/update.rs` (spec: `docs/specs/auto-update.md`).
 Source: GitHub `releases/latest` of `sarmadiq9090-coder/local-ai-chat` (const `update::REPO`), assets
 `local-ai-chat.exe` + `local-ai-chat.exe.sha256` (`<hex>  local-ai-chat.exe`). Dev/test override: env var
-`LOCALAI_UPDATE_FEED=<url>` returning JSON shaped like a GitHub release.
+`LOCALAI_UPDATE_FEED=<url>` returning JSON shaped like a GitHub release. Asset and checksum URLs
+(and redirects) must be `https://`; plain `http://` to `127.0.0.1` / `localhost` is accepted only
+while that override is set. Downloads are capped at 200 MB (exe) and 1 KB (`.sha256`).
 
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/api/app/update/check` | – | `UpdateCheck`. Query: `force=1` bypasses the 10-min cache; `local=1` skips the network (cached result or just `current`). Network problems never give a 5xx: `available: false` + `error`. No release / repo not found (404) → `available: false`, no `error`. |
-| POST | `/api/app/update/install` | – | NDJSON stream: `{ "status": "downloading", "downloaded": number, "total": number \| null }` … `{ "status": "verifying" }` … `{ "status": "restarting" }`, or a final `{ "error": string }` (no update, download failed, checksum mismatch, swap failed — the current exe is left in place). After `restarting` the exe was swapped (old one → `local-ai-chat.old.exe`), the new exe was started with `--after-update` (plus `--serve <port>` in dev mode) and this process exits ~1 s later. |
+| POST | `/api/app/update/install` | – | NDJSON stream: `{ "status": "downloading", "downloaded": number, "total": number \| null }` … `{ "status": "verifying" }` … `{ "status": "restarting" }`, or a final `{ "error": string }` (no update, insecure URL, download failed or too large, checksum mismatch, swap failed — the current exe is left in place). After `restarting` the exe was swapped (old one → `local-ai-chat.old.exe`), the new exe was started with `--after-update` (plus `--serve <port>` in dev mode) and this process exits ~1 s later. |
 
 ```ts
 type UpdateCheck = {
-  current: string;            // this build, e.g. "2.0.0"
+  current: string;            // this build, e.g. "2.1.0"
   latest?: string;            // latest release version without "v"
   available: boolean;         // latest > current (semver)
   notes?: string;             // release notes (Markdown)
