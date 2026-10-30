@@ -14,26 +14,131 @@ pub struct Guard {
 pub fn acquire() -> Option<Guard> {
     use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
     use windows_sys::Win32::System::Threading::CreateMutexW;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        FindWindowW, IsIconic, SW_RESTORE, SetForegroundWindow, ShowWindow,
-    };
 
     let name = wide("Local\\LocalAiChat.SingleInstance");
-    // SAFETY: plain Win32 calls with valid, NUL-terminated UTF-16 strings.
+    // SAFETY: plain Win32 call with a valid, NUL-terminated UTF-16 string.
     unsafe {
         let handle = CreateMutexW(std::ptr::null(), 0, name.as_ptr());
         if GetLastError() != ERROR_ALREADY_EXISTS {
             return Some(Guard { _handle: handle });
         }
-        let title = wide(WINDOW_TITLE);
-        let hwnd = FindWindowW(std::ptr::null(), title.as_ptr());
-        if !hwnd.is_null() {
-            if IsIconic(hwnd) != 0 {
-                ShowWindow(hwnd, SW_RESTORE);
+    }
+    focus_existing_window();
+    None
+}
+
+/// Finds the running instance's main window and brings it to the foreground.
+///
+/// `FindWindowW(title)` is not enough: other top-level windows can share the
+/// title (e.g. Explorer's `Windows.Internal.Shell.TabProxyWindow`). So only
+/// windows with exactly our title, owned by another process running an exe
+/// with our file name, are considered.
+#[cfg(windows)]
+fn focus_existing_window() {
+    use windows_sys::Win32::Foundation::{HWND, LPARAM};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
+        SW_RESTORE, SW_SHOW, SetForegroundWindow, ShowWindow,
+    };
+
+    struct Search {
+        title: Vec<u16>,
+        exe_name: String,
+        own_pid: u32,
+        found: HWND,
+    }
+
+    unsafe extern "system" fn visit(hwnd: HWND, lparam: LPARAM) -> windows_sys::core::BOOL {
+        // SAFETY: `lparam` is the `&mut Search` handed to `EnumWindows` below,
+        // alive for the whole (synchronous) enumeration.
+        let search = unsafe { &mut *(lparam as *mut Search) };
+        // SAFETY: `hwnd` comes from the system; buffers are sized as passed.
+        unsafe {
+            let len = GetWindowTextLengthW(hwnd);
+            if len <= 0 || len as usize != search.title.len() {
+                return 1;
             }
-            SetForegroundWindow(hwnd);
+            let mut buf = vec![0u16; len as usize + 1];
+            let got = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
+            if got <= 0 || buf[..got as usize] != search.title[..] {
+                return 1;
+            }
         }
-        None
+        let pid = pid_of(hwnd);
+        if pid == 0 || pid == search.own_pid {
+            return 1;
+        }
+        match process_exe_name(pid) {
+            Some(name) if name.eq_ignore_ascii_case(&search.exe_name) => {
+                search.found = hwnd;
+                0 // stop enumerating
+            }
+            _ => 1,
+        }
+    }
+
+    fn pid_of(hwnd: HWND) -> u32 {
+        let mut pid = 0u32;
+        // SAFETY: `hwnd` comes from the enumeration; `pid` is a valid out pointer.
+        unsafe { GetWindowThreadProcessId(hwnd, &mut pid) };
+        pid
+    }
+
+    let Some(exe_name) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+    else {
+        return;
+    };
+    let mut search = Search {
+        title: WINDOW_TITLE.encode_utf16().collect(),
+        exe_name,
+        own_pid: std::process::id(),
+        found: std::ptr::null_mut(),
+    };
+    // SAFETY: `visit` only dereferences `lparam` as `search`, which outlives
+    // this synchronous call; the found HWND is used right away.
+    unsafe {
+        EnumWindows(Some(visit), &mut search as *mut Search as LPARAM);
+        let hwnd = search.found;
+        if hwnd.is_null() {
+            return;
+        }
+        if IsIconic(hwnd) != 0 {
+            ShowWindow(hwnd, SW_RESTORE);
+        } else {
+            ShowWindow(hwnd, SW_SHOW);
+        }
+        SetForegroundWindow(hwnd);
+    }
+}
+
+/// File name (e.g. `local-ai-chat.exe`) of the exe running as process `pid`.
+#[cfg(windows)]
+fn process_exe_name(pid: u32) -> Option<String> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+        QueryFullProcessImageNameW,
+    };
+    // SAFETY: the handle is checked and closed; the buffer length is passed in/out.
+    unsafe {
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if process.is_null() {
+            return None;
+        }
+        let mut buf = vec![0u16; 32_768];
+        let mut len = buf.len() as u32;
+        let ok =
+            QueryFullProcessImageNameW(process, PROCESS_NAME_WIN32, buf.as_mut_ptr(), &mut len);
+        CloseHandle(process);
+        if ok == 0 {
+            return None;
+        }
+        let path = String::from_utf16_lossy(&buf[..len as usize]);
+        std::path::Path::new(&path)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
     }
 }
 

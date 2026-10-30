@@ -9,7 +9,7 @@ fn main() {
             .set("ProductName", "Local AI Chat")
             .set("FileDescription", "الذكاء المحلي - Local AI Chat")
             .set("CompanyName", "Local AI Chat")
-            .set("LegalCopyright", "")
+            .set("LegalCopyright", "Copyright (c) 2026 Sarmad — MIT License")
             .set("FileVersion", version)
             .set("ProductVersion", version);
         res.compile().expect("failed to embed Windows resources");

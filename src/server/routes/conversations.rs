@@ -6,13 +6,14 @@
 use axum::{
     Json, Router,
     extract::{Path, State},
+    http::StatusCode,
     routing::get,
 };
 use serde_json::{Value, json};
 
 use crate::error::{ApiError, ApiResult};
 use crate::server::AppState;
-use crate::storage::{ConversationMeta, ConversationStore};
+use crate::storage::{ConversationMeta, ConversationStore, CorruptConversation};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -42,9 +43,19 @@ async fn get_conversation(
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
     check_id(&id)?;
-    s.store
-        .get(&id)?
-        .map(Json)
+    let conv = s
+        .store
+        .get(&id)
+        .map_err(|e| match e.downcast_ref::<CorruptConversation>() {
+            Some(c) => ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "This conversation file is corrupt and can't be opened. You can delete it.",
+            )
+            .with_code("corrupt")
+            .with_detail(c.0.clone()),
+            None => ApiError::from(e),
+        })?;
+    conv.map(Json)
         .ok_or_else(|| ApiError::not_found("conversation not found"))
 }
 

@@ -41,9 +41,16 @@ impl Ollama {
     }
 
     /// Start a background `ollama serve` (if installed) and wait until it answers.
+    ///
+    /// Only for a local URL (127.0.0.1 / localhost / ::1): a remote Ollama can't be
+    /// started from here, so that just reports whether it answers. The wait after
+    /// spawning is capped at [`START_WAIT`].
     pub async fn start(&self, base_url: &str) -> bool {
         if self.version(base_url).await.is_some() {
             return true;
+        }
+        if !is_local_url(base_url) {
+            return false;
         }
         let Some(exe) = find_ollama_exe() else {
             return false;
@@ -51,14 +58,36 @@ impl Ollama {
         if spawn_detached(&exe, &["serve"]).is_err() {
             return false;
         }
-        for _ in 0..30 {
+        let deadline = tokio::time::Instant::now() + START_WAIT;
+        loop {
             tokio::time::sleep(Duration::from_millis(500)).await;
-            if self.version(base_url).await.is_some() {
+            let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if left.is_zero() {
+                return false;
+            }
+            if let Ok(Some(_)) = tokio::time::timeout(left, self.version(base_url)).await {
                 return true;
             }
         }
-        false
     }
+}
+
+/// Longest wait for a freshly spawned `ollama serve` to answer.
+const START_WAIT: Duration = Duration::from_secs(20);
+
+/// The URL points at this machine (so `ollama serve` here would serve it).
+fn is_local_url(url: &str) -> bool {
+    let Some(host) = reqwest::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_string))
+    else {
+        return false;
+    };
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
 }
 
 fn find_ollama_exe() -> Option<PathBuf> {
@@ -95,4 +124,21 @@ fn spawn_detached(exe: &PathBuf, args: &[&str]) -> std::io::Result<()> {
         cmd.creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW);
     }
     cmd.spawn().map(|_| ())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_local_url;
+
+    #[test]
+    fn local_urls_only() {
+        assert!(is_local_url("http://127.0.0.1:11434"));
+        assert!(is_local_url("http://localhost:11434"));
+        assert!(is_local_url("http://LOCALHOST"));
+        assert!(is_local_url("http://[::1]:11434"));
+        assert!(!is_local_url("http://192.168.1.5:11434"));
+        assert!(!is_local_url("https://ollama.example.com"));
+        assert!(!is_local_url("http://localhost.evil.com"));
+        assert!(!is_local_url("not a url"));
+    }
 }

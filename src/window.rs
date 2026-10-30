@@ -18,7 +18,14 @@ pub fn run(url: &str, paths: &Paths) -> anyhow::Result<()> {
     crate::update::set_exit_handler(move || {
         let _ = proxy.lock().map(|p| p.send_event(()));
     });
-    let window = WindowBuilder::new()
+    let builder = WindowBuilder::new();
+    // Big (taskbar / Alt+Tab) icon too: tao only sets the small one by default.
+    #[cfg(windows)]
+    let builder = {
+        use tao::platform::windows::WindowBuilderExtWindows;
+        builder.with_taskbar_icon(app_icon_sized(256))
+    };
+    let window = builder
         .with_title(WINDOW_TITLE)
         .with_inner_size(LogicalSize::new(1200.0, 820.0))
         .with_min_inner_size(LogicalSize::new(420.0, 500.0))
@@ -66,6 +73,13 @@ pub fn run(url: &str, paths: &Paths) -> anyhow::Result<()> {
 fn app_icon() -> Option<tao::window::Icon> {
     use tao::platform::windows::IconExtWindows;
     tao::window::Icon::from_resource(1, None).ok()
+}
+
+/// The embedded icon at a specific size (Windows picks or scales the best entry).
+#[cfg(windows)]
+fn app_icon_sized(px: u32) -> Option<tao::window::Icon> {
+    use tao::platform::windows::IconExtWindows;
+    tao::window::Icon::from_resource(1, Some(tao::dpi::PhysicalSize::new(px, px))).ok()
 }
 
 #[cfg(not(windows))]

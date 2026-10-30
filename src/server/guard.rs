@@ -21,7 +21,7 @@ pub async fn check(State(BoundPort(port)): State<BoundPort>, req: Request, next:
     if allowed(req.headers(), port) {
         next.run(req).await
     } else {
-        (StatusCode::FORBIDDEN, "forbidden").into_response()
+        crate::error::ApiError::new(StatusCode::FORBIDDEN, "forbidden").into_response()
     }
 }
 

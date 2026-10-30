@@ -107,11 +107,63 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// Missing file → defaults. Corrupt file → renamed to
+    /// `settings.json.corrupt-<unix seconds>` (kept for the user, logged) and
+    /// defaults are used, so it is never silently overwritten.
     pub fn load(path: &Path) -> Self {
-        std::fs::read(path)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+        let Ok(bytes) = std::fs::read(path) else {
+            return Self::default();
+        };
+        match serde_json::from_slice(&bytes) {
+            Ok(s) => s,
+            Err(e) => {
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let mut name = path.as_os_str().to_owned();
+                name.push(format!(".corrupt-{secs}"));
+                let backup = PathBuf::from(name);
+                match std::fs::rename(path, &backup) {
+                    Ok(()) => eprintln!(
+                        "settings: {} is corrupt ({e}); moved to {}, using defaults",
+                        path.display(),
+                        backup.display()
+                    ),
+                    Err(re) => eprintln!(
+                        "settings: {} is corrupt ({e}); backup failed ({re}), using defaults",
+                        path.display()
+                    ),
+                }
+                Self::default()
+            }
+        }
+    }
+
+    /// `self` with the top-level fields of `patch` (a JSON object) applied:
+    /// fields missing from `patch` keep their current value. Unknown fields are
+    /// ignored; a wrongly typed field is an error.
+    pub fn merged(&self, patch: serde_json::Value) -> anyhow::Result<Self> {
+        let serde_json::Value::Object(patch) = patch else {
+            anyhow::bail!("settings must be a JSON object");
+        };
+        let mut base = serde_json::to_value(self)?;
+        if let Some(obj) = base.as_object_mut() {
+            obj.extend(patch);
+        }
+        Ok(serde_json::from_value(base)?)
+    }
+
+    /// `ollama_url` (empty = default) must be an absolute http(s) URL with a host.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        let url = self.ollama_url.trim();
+        if url.is_empty() {
+            return Ok(());
+        }
+        match reqwest::Url::parse(url) {
+            Ok(u) if matches!(u.scheme(), "http" | "https") && u.host_str().is_some() => Ok(()),
+            _ => Err("ollama_url must be an absolute http(s) URL, e.g. http://127.0.0.1:11434"),
+        }
     }
 
     pub fn save(&self, path: &Path) -> anyhow::Result<()> {
@@ -189,5 +241,74 @@ mod language_tests {
         }
         .sanitized();
         assert_eq!(s.system_prompt, "custom");
+    }
+
+    #[test]
+    fn partial_merge_keeps_other_fields() {
+        let cur = Settings {
+            temperature: 1.2,
+            theme: Theme::Light,
+            default_model: Some("m".into()),
+            ..Default::default()
+        };
+        let s = cur.merged(serde_json::json!({ "think": true })).unwrap();
+        assert!(s.think);
+        assert_eq!(s.temperature, 1.2);
+        assert_eq!(s.theme, Theme::Light);
+        assert_eq!(s.default_model.as_deref(), Some("m"));
+        // Explicit null clears an optional field; a full body replaces everything.
+        let s = cur
+            .merged(serde_json::json!({ "default_model": null }))
+            .unwrap();
+        assert_eq!(s.default_model, None);
+        let full = serde_json::to_value(Settings::default()).unwrap();
+        let s = cur.merged(full).unwrap();
+        assert_eq!(
+            serde_json::to_value(&s).unwrap(),
+            serde_json::to_value(Settings::default()).unwrap()
+        );
+        assert!(
+            cur.merged(serde_json::json!({ "temperature": "hot" }))
+                .is_err()
+        );
+        assert!(cur.merged(serde_json::json!([1])).is_err());
+    }
+
+    #[test]
+    fn ollama_url_validation() {
+        let with = |u: &str| Settings {
+            ollama_url: u.into(),
+            ..Default::default()
+        };
+        assert!(with("http://127.0.0.1:11434").validate().is_ok());
+        assert!(with("https://ollama.example.com/").validate().is_ok());
+        assert!(with("").validate().is_ok());
+        assert!(with("127.0.0.1:11434").validate().is_err());
+        assert!(with("ftp://host").validate().is_err());
+        assert!(with("http://").validate().is_err());
+        assert!(with("not a url").validate().is_err());
+    }
+
+    #[test]
+    fn corrupt_settings_are_backed_up() {
+        let dir = std::env::temp_dir().join(format!("lac-settings-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("settings.json");
+        std::fs::write(&file, b"{ not json").unwrap();
+        let s = Settings::load(&file);
+        assert_eq!(s.ollama_url, Settings::default().ollama_url);
+        assert!(!file.exists());
+        let backups: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("settings.json.corrupt-")
+            })
+            .collect();
+        assert_eq!(backups.len(), 1);
+        assert_eq!(std::fs::read(backups[0].path()).unwrap(), b"{ not json");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

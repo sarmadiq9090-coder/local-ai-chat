@@ -6,7 +6,7 @@
 use axum::{
     Router,
     body::{Body, Bytes},
-    extract::{Path, State},
+    extract::{Path, State, rejection::BytesRejection},
     http::{HeaderMap, Method, StatusCode, Uri, header},
     response::{IntoResponse, Response},
     routing::any,
@@ -26,8 +26,11 @@ async fn forward(
     method: Method,
     uri: Uri,
     headers: HeaderMap,
-    body: Bytes,
+    body: Result<Bytes, BytesRejection>,
 ) -> ApiResult<Response> {
+    // Our own rejections (e.g. 413 body too large) as `{"error"}`; Ollama's own
+    // responses below pass through untouched.
+    let body = body.map_err(|r| ApiError::new(r.status(), r.body_text()))?;
     let mut url = format!("{}/api/{}", state.ollama_url().await, path);
     if let Some(q) = uri.query() {
         url.push('?');
@@ -47,10 +50,9 @@ async fn forward(
     }
 
     let upstream = req.send().await.map_err(|e| {
-        ApiError::new(
-            StatusCode::BAD_GATEWAY,
-            format!("Ollama is not reachable / Ollama غير متاح: {e}"),
-        )
+        ApiError::new(StatusCode::BAD_GATEWAY, "Ollama is not reachable")
+            .with_code("ollama_unreachable")
+            .with_detail(e.to_string())
     })?;
 
     let status =

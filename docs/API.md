@@ -3,7 +3,10 @@
 All endpoints are served by the Rust backend on the same origin as the UI (`http://127.0.0.1:<random port>`).
 JSON in / JSON out unless noted. Errors: non-2xx status with body `{"error": "message"}` — including
 request rejections under `/api/app` (malformed JSON → 400, wrong field types → 422, missing
-`Content-Type` → 415, bad path/query → 400, body over 64 MB → 413, wrong method → 405).
+`Content-Type` → 415, bad path/query → 400, body over 64 MB → 413, wrong method → 405, unknown
+`/api/...` route → 404), the request guard's 403 (foreign `Host`/`Origin`), and a 413 for an oversized
+body on `/api/ollama/*`. Some errors add a machine-readable `"code"` (and a technical `"detail"`) so the
+UI can show a localized message: `ollama_unreachable` (502), `corrupt` (500), `invalid_ollama_url` (400).
 
 ## App endpoints (`/api/app/...`)
 
@@ -12,12 +15,12 @@ Implemented in `src/server/routes/<feature>.rs` (one file per feature, merged in
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/api/app/status` | – | `{ "ollama": bool, "version": string \| null, "app_version": string, "data_dir": string }` |
-| POST | `/api/app/ollama/start` | – | `{ "ok": bool }` — tries to launch Ollama, waits up to ~15s |
+| POST | `/api/app/ollama/start` | – | `{ "ok": bool }` — tries to launch Ollama, only for a local `ollama_url` (127.0.0.1 / localhost / ::1; a remote URL just reports whether it answers), waits up to ~20 s after spawning |
 | GET | `/api/app/system` | – | `SystemInfo` — hardware summary for model suggestions; probed once, then cached |
 | GET | `/api/app/settings` | – | `Settings` |
-| PUT | `/api/app/settings` | `Settings` | `Settings` (saved) |
-| GET | `/api/app/conversations` | – | `ConversationMeta[]`, newest `updated_at` first |
-| GET | `/api/app/conversations/{id}` | – | `Conversation` (404 if missing) |
+| PUT | `/api/app/settings` | `Partial<Settings>` | `Settings` (saved) — given fields are merged into the current settings, missing ones keep their value (a full object replaces everything). Not an object → 400; wrong field type → 422; `ollama_url` not an absolute http(s) URL → 400 `{ "error", "code": "invalid_ollama_url" }` (empty → default URL) |
+| GET | `/api/app/conversations` | – | `ConversationMeta[]`, newest `updated_at` first. A file that can't be parsed is still listed (`corrupt: true`, see type) so it can be deleted |
+| GET | `/api/app/conversations/{id}` | – | `Conversation` (404 if missing; corrupt file → 500 `{ "error": string, "code": "corrupt", "detail": string /* parser message */ }`) |
 | PUT | `/api/app/conversations/{id}` | `Conversation` | `{ "ok": true }` — create or replace |
 | DELETE | `/api/app/conversations/{id}` | – | `{ "ok": true }` |
 | POST | `/api/app/export` | `{ "filename": string, "content": string }` | `{ "path": string }` — saved to `Documents\LocalAiChat\` and revealed in Explorer; an existing file is never overwritten (`name (2).md`, `name (3).md`…) |
@@ -26,6 +29,8 @@ Implemented in `src/server/routes/<feature>.rs` (one file per feature, merged in
 
 `/api/ollama/<anything>` is forwarded verbatim to `<settings.ollama_url>/api/<anything>` (same method, body, query).
 Streaming responses (NDJSON from `/chat`, `/pull`) are streamed through unchanged.
+Ollama's own responses (including its errors) pass through unchanged. If Ollama can't be reached:
+**502** `{ "error": "Ollama is not reachable", "code": "ollama_unreachable", "detail": string /* reqwest error */ }`.
 Useful ones: `GET tags`, `POST show`, `POST chat`, `POST pull`, `DELETE delete`, `GET ps`.
 
 ## Types
@@ -44,6 +49,8 @@ type Settings = {
                              // language's default on save; a custom prompt is never changed.
   auto_update: boolean;      // check GitHub for a newer release on start + every 6 h, default true
 };
+// settings.json that can't be parsed is renamed to `settings.json.corrupt-<unix seconds>` (and
+// logged) before the defaults are used, so it is never silently overwritten.
 
 // GPUs: NVIDIA VRAM from nvidia-smi; other adapters from WMI + the driver's registry
 // qwMemorySize (null when unknown, e.g. integrated GPUs). ram_gb = total physical RAM.
@@ -53,7 +60,13 @@ type SystemInfo = {
   cpu: string | null;        // e.g. "Intel(R) Core(TM) i9-10900 CPU @ 2.80GHz"
 };
 
-type ConversationMeta = { id: string; title: string; model: string | null; updated_at: number /* unix ms */ };
+type ConversationMeta = {
+  id: string; title: string; model: string | null; updated_at: number /* unix ms */;
+  // Only present (true) for a conversation file that isn't valid JSON: then id = file name,
+  // title = "", model = null, updated_at = the file's modified time (ms). GET → 500 code "corrupt";
+  // DELETE works.
+  corrupt?: true;
+};
 
 type Conversation = ConversationMeta & {
   created_at: number;        // unix ms
@@ -152,3 +165,11 @@ type UpdateCheck = {
   just_updated?: string;      // set once after a restart into a new version (from --after-update)
 };
 ```
+
+## Static UI (everything else)
+
+Embedded `ui/` files. Every response has `X-Content-Type-Options: nosniff`. `/` (`index.html`) also
+gets `Content-Security-Policy` = the policy of its own `<meta http-equiv="Content-Security-Policy">`
+(read from the file, so the two never diverge) plus `frame-ancestors 'none'`.
+`features/preview/frame.html` gets only `frame-ancestors 'self'` — never the page policy, because
+previews run inline and CDN scripts inside it.

@@ -14,6 +14,10 @@ use serde_json::json;
 pub struct ApiError {
     status: StatusCode,
     message: String,
+    /// Machine-readable error code (`"code"` in the body), for the UI to localize.
+    code: Option<&'static str>,
+    /// Technical detail (`"detail"` in the body), e.g. the underlying error text.
+    detail: Option<String>,
 }
 
 impl ApiError {
@@ -21,7 +25,19 @@ impl ApiError {
         Self {
             status,
             message: message.into(),
+            code: None,
+            detail: None,
         }
+    }
+
+    pub fn with_code(mut self, code: &'static str) -> Self {
+        self.code = Some(code);
+        self
+    }
+
+    pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
+        self
     }
 
     pub fn not_found(message: impl Into<String>) -> Self {
@@ -41,7 +57,14 @@ impl<E: Into<anyhow::Error>> From<E> for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (self.status, Json(json!({ "error": self.message }))).into_response()
+        let mut body = json!({ "error": self.message });
+        if let Some(code) = self.code {
+            body["code"] = json!(code);
+        }
+        if let Some(detail) = self.detail {
+            body["detail"] = json!(detail);
+        }
+        (self.status, Json(body)).into_response()
     }
 }
 
