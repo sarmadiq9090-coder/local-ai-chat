@@ -5,6 +5,8 @@ JSON in / JSON out unless noted. Errors: non-2xx status with body `{"error": "me
 
 ## App endpoints (`/api/app/...`)
 
+Implemented in `src/server/routes/<feature>.rs` (one file per feature, merged in `routes/mod.rs`).
+
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/api/app/status` | – | `{ "ollama": bool, "version": string \| null, "app_version": string, "data_dir": string }` |

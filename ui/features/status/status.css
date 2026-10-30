@@ -1,0 +1,18 @@
+/* status.css — Ollama-down banner and the top-bar connection status. */
+
+.banner {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 18px; font-size: 14px;
+  background: color-mix(in srgb, var(--danger) 14%, var(--bg));
+  border-bottom: 1px solid color-mix(in srgb, var(--danger) 35%, var(--line));
+}
+.banner [data-icon] { color: var(--danger); }
+.banner .btn { margin-inline-start: auto; padding: 6px 14px; }
+
+#status { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#status.ok::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); margin-inline-end: 6px; vertical-align: middle; }
+#status.err { color: var(--danger); }
+
+@media (max-width: 800px) {
+  #status { display: none; }
+}

@@ -3,12 +3,18 @@
 // in a sandboxed iframe (no same-origin access to the app or its API).
 // Console output and runtime errors are forwarded via postMessage and shown in
 // a console drawer; "اطلب الإصلاح" sends the errors back to the model.
+// Esc: closes the panel. The "تشغيل" button itself is rendered by core/markdown.js
+// (RUNNABLE languages); this module handles its clicks.
+// Cross-feature deps: chat (send).
 
-import { $, el, iconButton } from "./dom.js";
-import { t } from "./i18n.js";
-import { icon } from "./icons.js";
-import { send } from "./chat.js";
-import { state } from "./state.js";
+import { $, el, iconButton } from "../../core/dom.js";
+import { t, registerStrings } from "../../core/i18n.js";
+import { icon } from "../../core/icons.js";
+import { send } from "../chat/chat.js";
+import { state } from "../../core/state.js";
+import strings from "./strings.js";
+
+registerStrings("preview", strings);
 
 const WIDTH_KEY = "previewWidth";
 const MAX_LOGS = 200;
@@ -179,3 +185,5 @@ function installResize(handle) {
     handle.addEventListener("pointerup", up, { once: true });
   });
 }
+
+export default { name: "preview", init: initPreview, onEscape: closePreview };

@@ -1,9 +1,14 @@
 // exporter.js — turn a conversation into a Markdown document and hand it to the
 // backend (POST /api/app/export), which writes it under Documents\LocalAiChat\.
+// Owns the top-bar export button (#exportBtn).
 
-import * as api from "./api.js";
-import { toast } from "./dom.js";
-import { t } from "./i18n.js";
+import { state } from "../../core/state.js";
+import * as api from "../../core/api.js";
+import { $, toast } from "../../core/dom.js";
+import { t, registerStrings } from "../../core/i18n.js";
+import strings from "./strings.js";
+
+registerStrings("exporter", strings);
 
 /** Longest run of backticks in `s` + 1 (min 3) so fences never break. Pure. */
 export function fenceFor(s) {
@@ -45,3 +50,8 @@ export async function exportConversation(conv) {
     toast(t("exportFailed", { error: e.message }), "error");
   }
 }
+
+export default {
+  name: "exporter",
+  init() { $("#exportBtn").addEventListener("click", () => exportConversation(state.current)); },
+};

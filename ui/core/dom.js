@@ -137,6 +137,9 @@ export function closeTopModal() {
 
 export const hasOpenModal = () => modalStack.length > 0;
 
+/** Pseudo-feature so the modal stack takes its place in the Esc chain (features/index.js). */
+export const modalsFeature = { name: "modals", onEscape: closeTopModal };
+
 /** Promise-based confirm dialog → resolves true/false. */
 export function confirmDialog(message, { title = t("confirm"), okText = t("confirm"), danger = false } = {}) {
   return new Promise(resolve => {

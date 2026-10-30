@@ -4,7 +4,7 @@
 // arabic (good | ok | weak), desc (Arabic, what it's good at).
 // rateModel(model, system) rates a model against GET /api/app/system.
 
-import { t } from "./i18n.js";
+import { t } from "../../core/i18n.js";
 
 export const CATEGORIES = ["chat", "code", "reasoning", "vision"];
 export const LEVELS = ["best", "good", "slow", "no"];

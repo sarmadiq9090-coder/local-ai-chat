@@ -1,12 +1,16 @@
 // settings.js — app settings: load/save via /api/app/settings, theme application,
 // and the settings modal (system prompt, temperature, context length, theme,
 // Ollama URL). Emits "settings" after every change and "ollama-url-changed"
-// when the Ollama address is edited.
+// when the Ollama address is edited. Owns the sidebar "settings" button.
+// Other features wait for `settingsLoaded` before using state.settings at startup.
 
-import { state, emit } from "./state.js";
-import * as api from "./api.js";
-import { el, openModal, toast } from "./dom.js";
-import { t } from "./i18n.js";
+import { state, emit } from "../../core/state.js";
+import * as api from "../../core/api.js";
+import { $, el, openModal, toast } from "../../core/dom.js";
+import { t, registerStrings } from "../../core/i18n.js";
+import strings from "./strings.js";
+
+registerStrings("settings", strings);
 
 export const DEFAULT_SETTINGS = {
   ollama_url: "http://127.0.0.1:11434",
@@ -31,6 +35,10 @@ darkQuery?.addEventListener?.("change", () => {
   if (state.settings?.theme === "system") applyTheme("system");
 });
 
+let markLoaded;
+/** Resolves once the first loadSettings() has finished (startup ordering). */
+export const settingsLoaded = new Promise(resolve => { markLoaded = resolve; });
+
 /** Fetch settings from the backend (defaults on failure) and apply the theme. */
 export async function loadSettings() {
   let s = {};
@@ -38,6 +46,7 @@ export async function loadSettings() {
   state.settings = { ...DEFAULT_SETTINGS, ...s };
   applyTheme(state.settings.theme);
   emit("settings");
+  markLoaded();
   return state.settings;
 }
 
@@ -130,3 +139,9 @@ export function openSettings() {
     onClose: () => { if (!saved) applyTheme(state.settings?.theme); }, // undo live preview
   });
 }
+
+export default {
+  name: "settings",
+  init() { $("#openSettings").addEventListener("click", openSettings); },
+  start: loadSettings,
+};

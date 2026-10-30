@@ -1,13 +1,13 @@
 //! Local HTTP server: embedded UI + JSON API + Ollama passthrough.
 //!
 //! Routes:
-//! - `/api/app/*`    app endpoints (see `app_routes`)
+//! - `/api/app/*`    app endpoints, one file per feature in `routes/` (merged in `routes/mod.rs`)
 //! - `/api/ollama/*` forwarded to Ollama (see `ollama_proxy`)
 //! - everything else: embedded static UI files (see `assets`)
 
-mod app_routes;
 mod assets;
 mod ollama_proxy;
+mod routes;
 
 use std::sync::{Arc, mpsc};
 
@@ -71,7 +71,7 @@ pub async fn run(paths: Paths, port: u16, port_tx: mpsc::Sender<u16>) -> anyhow:
     }
 
     let app = Router::new()
-        .nest("/api/app", app_routes::router())
+        .nest("/api/app", routes::router())
         .nest("/api/ollama", ollama_proxy::router())
         .fallback(assets::serve)
         // Chats resend attachments with the whole history; the 2 MB default is too small.

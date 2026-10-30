@@ -4,14 +4,20 @@
 //  * the model manager modal (list / delete / download with progress),
 //  * hardware-aware download suggestions (catalog.js + /api/app/system).
 // Emits "model" when the selection changes and "models" when the list reloads.
+// Esc: closes the model dropdown. The installed list is first loaded by the
+// status feature once Ollama is reachable.
+// Cross-feature deps: settings (saveSettings).
 
-import { state, emit } from "./state.js";
-import * as api from "./api.js";
-import { $, el, iconButton, openModal, confirmDialog, toast, setStatus } from "./dom.js";
-import { saveSettings } from "./settings.js";
-import { icon } from "./icons.js";
-import { t } from "./i18n.js";
+import { state, emit } from "../../core/state.js";
+import * as api from "../../core/api.js";
+import { $, el, iconButton, openModal, confirmDialog, toast, setStatus } from "../../core/dom.js";
+import { saveSettings } from "../settings/settings.js";
+import { icon } from "../../core/icons.js";
+import { t, registerStrings } from "../../core/i18n.js";
 import { CATALOG, CATEGORIES, LEVELS, rateModel, discreteGpus } from "./catalog.js";
+import strings from "./strings.js";
+
+registerStrings("models", strings);
 
 /** Bytes → "4.7" (GB, one decimal). Pure. */
 export const toGB = bytes => (Number(bytes || 0) / 1024 ** 3).toFixed(1);
@@ -308,3 +314,5 @@ function suggestionPicker(input) {
     card);
   return { node, select, refresh };
 }
+
+export default { name: "models", init: initModels, onEscape: closeModelMenu };

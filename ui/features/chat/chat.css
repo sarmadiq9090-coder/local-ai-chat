@@ -1,0 +1,162 @@
+/* chat.css — messages (user bubbles, assistant content with bidi-correct blocks,
+   thinking box, streaming cursor), empty state + examples, and the composer. */
+
+/* ---------- stage: messages + composer ---------- */
+#stage { flex: 1; display: flex; flex-direction: column; min-height: 0; position: relative; }
+#msgs { flex: 1; overflow-y: auto; padding: 16px 16px 24px; }
+.wrap { max-width: var(--content-w); margin: 0 auto; }
+
+#greeting, #examples { display: none; }
+#main.is-empty #msgs { display: none; }
+#main.is-empty #stage { justify-content: center; padding-bottom: 10vh; }
+#main.is-empty #greeting { display: block; text-align: center; padding: 0 16px 22px; }
+#main.is-empty #examples { display: grid; }
+#main.is-empty .hint { display: none; }
+#greeting h2 { margin: 0 0 8px; font-size: 30px; font-weight: 500; }
+#greeting p { margin: 0; color: var(--muted); font-size: 15px; }
+
+.examples {
+  grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;
+  width: 100%; max-width: var(--content-w); margin: 6px auto 0; padding: 0 16px;
+}
+.example {
+  display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; text-align: start;
+  border: 1px solid var(--line); border-radius: 14px; background: none; transition: background .15s, border-color .15s;
+}
+.example:hover { background: var(--hover); border-color: var(--line-strong); }
+.ex-title { font-size: 14px; font-weight: 600; }
+.ex-text { font-size: 13px; color: var(--muted); line-height: 1.6; unicode-bidi: plaintext; text-align: start;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* messages */
+.msg { margin: 0 0 26px; line-height: 1.8; }
+.msg.user { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.msg.user .bubble {
+  background: var(--user); padding: 10px 18px; border-radius: 22px; max-width: 80%;
+  white-space: pre-wrap; overflow-wrap: anywhere; unicode-bidi: plaintext; text-align: start;
+}
+.msg.editing .bubble { outline: 2px solid var(--accent); }
+.msg-chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; max-width: 80%; }
+
+.actions {
+  display: flex; align-items: center; gap: 2px; min-height: 32px;
+  opacity: 0; transition: opacity .15s;
+}
+.actions .icon-btn { width: 30px; height: 30px; border-radius: 8px; }
+.msg:hover .actions, .msg.ai:last-child .actions, .actions:focus-within { opacity: 1; }
+body.streaming .actions { opacity: 0 !important; pointer-events: none; }
+.actions .meta { font-size: 12px; color: var(--muted); padding-inline: 8px; }
+.actions .meta.stopped { color: var(--accent); }
+
+/* assistant content — bidi-correct blocks */
+.content { overflow-wrap: anywhere; }
+.content :is(p, h1, h2, h3, h4, h5, h6, li, blockquote, th, td) { unicode-bidi: plaintext; text-align: start; }
+.content p { margin: 0 0 14px; }
+.content > :last-child { margin-bottom: 0; }
+.content :is(h1, h2, h3, h4, h5, h6) { margin: 22px 0 10px; line-height: 1.45; }
+.content h1 { font-size: 23px; } .content h2 { font-size: 20px; } .content h3 { font-size: 18px; }
+.content :is(h4, h5, h6) { font-size: 16px; }
+.content :is(ul, ol) { margin: 0 0 14px; padding-inline: 26px; } /* both sides: items may resolve to either direction */
+.content li { margin: 4px 0; }
+.content a { color: var(--accent); }
+.content hr { border: 0; border-top: 1px solid var(--line); margin: 20px 0; }
+.content blockquote { border-inline-start: 3px solid var(--line-strong); margin: 0 0 14px; padding-inline-start: 14px; color: var(--muted); }
+.content code {
+  font-family: var(--mono); font-size: .88em; background: var(--panel-2);
+  padding: 1px 6px; border-radius: 5px; direction: ltr; unicode-bidi: isolate;
+}
+.table-wrap { overflow-x: auto; margin: 0 0 14px; }
+.content table { border-collapse: collapse; font-size: 15px; }
+.content :is(th, td) { border: 1px solid var(--line); padding: 7px 12px; }
+.content th { background: var(--panel); }
+.errmsg { color: var(--danger); }
+
+/* thinking */
+details.think {
+  margin: 0 0 14px; border: 1px solid var(--line); border-radius: 12px;
+  padding: 8px 14px; color: var(--muted); font-size: 14px;
+}
+details.think summary { cursor: pointer; display: flex; align-items: center; gap: 6px; list-style: none; user-select: none; }
+details.think summary::-webkit-details-marker { display: none; }
+details.think[open] summary { margin-bottom: 8px; }
+.think-text { white-space: pre-wrap; unicode-bidi: plaintext; text-align: start; line-height: 1.7; max-height: 340px; overflow-y: auto; }
+
+/* streaming cursor */
+.cursor {
+  display: inline-block; width: .5em; height: 1.05em; margin-inline-start: 2px;
+  vertical-align: text-bottom; background: var(--accent); border-radius: 2px;
+  animation: blink 1s steps(2) infinite;
+}
+.cursor.waiting { width: 10px; height: 10px; border-radius: 50%; vertical-align: middle; animation: pulse 1.1s ease-in-out infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+@keyframes pulse { 0%, 100% { transform: scale(.7); opacity: .5; } 50% { transform: scale(1); opacity: 1; } }
+
+/* ---------- composer ---------- */
+#composer { position: relative; padding: 0 16px 12px; flex-shrink: 0; }
+.box {
+  position: relative; max-width: var(--content-w); margin: 0 auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 26px;
+  padding: 10px 10px 8px; box-shadow: 0 2px 12px rgba(0, 0, 0, .12);
+  transition: border-color .15s;
+}
+.box:focus-within { border-color: var(--line-strong); }
+.box.drag { border-color: var(--accent); border-style: dashed; }
+#input {
+  display: block; width: 100%; resize: none; border: 0; outline: 0; background: none;
+  padding: 6px 10px; font-size: 16px; line-height: 1.6; max-height: 240px; overflow-y: auto;
+  unicode-bidi: plaintext; text-align: start;
+}
+#input::placeholder { color: var(--muted); }
+.box-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.send-btn {
+  width: 36px; height: 36px; border-radius: 50%; border: 0; display: inline-flex;
+  align-items: center; justify-content: center; background: var(--text); color: var(--bg);
+  transition: opacity .15s, transform .1s;
+}
+.send-btn:hover:not(:disabled) { transform: scale(1.05); }
+.send-btn:disabled { opacity: .3; }
+.send-btn.stop { background: var(--text); }
+.drop-hint {
+  position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+  border-radius: inherit; background: color-mix(in srgb, var(--panel) 88%, transparent);
+  color: var(--accent); font-weight: 600; pointer-events: none;
+}
+.box.drag .drop-hint { display: flex; }
+.hint { max-width: var(--content-w); margin: 8px auto 0; font-size: 12px; color: var(--muted); text-align: center; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 4px 8px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 280px;
+  padding: 5px 8px 5px 10px; padding-inline: 10px 6px; border-radius: 10px;
+  background: var(--panel-2); border: 1px solid var(--line); font-size: 13px;
+}
+.chip-icon { color: var(--accent); }
+.chip-name {
+  border: 0; background: none; padding: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  unicode-bidi: plaintext; font-size: 13px;
+}
+.chip-name:hover { text-decoration: underline; }
+.chip-size { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.chip-x { display: inline-flex; border: 0; background: none; color: var(--muted); padding: 2px; border-radius: 6px; }
+.chip-x .ic { width: 14px; height: 14px; }
+.chip-x:hover { color: var(--danger); background: var(--hover); }
+
+.edit-bar {
+  max-width: var(--content-w); margin: 0 auto 8px; display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--muted); padding: 0 12px;
+}
+.edit-bar .link-btn { margin-inline-start: auto; }
+
+.to-bottom {
+  position: absolute; top: -50px; left: 50%; transform: translate(-50%, 8px);
+  width: 36px; height: 36px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--line); background: var(--panel); color: var(--text); box-shadow: var(--shadow);
+  opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; z-index: 5;
+}
+.to-bottom.show { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }
+.to-bottom:hover { background: var(--panel-2); }
+
+@media (max-width: 800px) {
+  .examples { grid-template-columns: 1fr; }
+  .msg.user .bubble, .msg-chips { max-width: 92%; }
+}

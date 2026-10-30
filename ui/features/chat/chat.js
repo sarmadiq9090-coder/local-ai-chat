@@ -3,16 +3,22 @@
 // sending + NDJSON streaming (rAF-throttled painting, stop, tokens/s),
 // regenerate, edit-and-resend, text-file attachments (button + drag & drop),
 // empty state with example prompts, smart auto-scroll and a scroll-to-bottom button.
+// Esc: stops a running generation.
+// Cross-feature deps: sidebar (persistConversation, titleFrom), models (supportsThinking),
+// exporter (fenceFor).
 
-import { state, on, emit } from "./state.js";
-import * as api from "./api.js";
-import { $, el, iconButton, copyText, toast, openModal } from "./dom.js";
-import { renderMarkdown } from "./markdown.js";
-import { persistConversation, titleFrom } from "./sidebar.js";
-import { supportsThinking } from "./models.js";
-import { fenceFor } from "./exporter.js";
-import { icon } from "./icons.js";
-import { t } from "./i18n.js";
+import { state, on, emit } from "../../core/state.js";
+import * as api from "../../core/api.js";
+import { $, el, iconButton, copyText, toast, openModal } from "../../core/dom.js";
+import { renderMarkdown } from "../../core/markdown.js";
+import { persistConversation, titleFrom } from "../sidebar/sidebar.js";
+import { supportsThinking } from "../models/models.js";
+import { fenceFor } from "../exporter/exporter.js";
+import { icon } from "../../core/icons.js";
+import { t, registerStrings } from "../../core/i18n.js";
+import strings from "./strings.js";
+
+registerStrings("chat", strings);
 
 const MAX_FILE_BYTES = 200 * 1024;
 const STICK_PX = 120;      // "near bottom" threshold for auto-scroll
@@ -428,3 +434,5 @@ async function generate(conv) {
     await persistConversation(conv);
   }
 }
+
+export default { name: "chat", init: initChat, onEscape: stopGeneration };

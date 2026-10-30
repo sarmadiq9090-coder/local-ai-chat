@@ -1,4 +1,4 @@
-/* preview.css — live preview panel (see js/preview.js). The panel is the last
+/* preview.css — live preview panel (see preview.js). The panel is the last
    flex child of <body>, so it sits at the inline-end (left side in RTL). */
 
 #preview {
@@ -34,7 +34,6 @@ body.resizing .preview-frame { pointer-events: none; } /* keep pointer events wh
   border-top: 1px solid var(--line); font-size: 14px;
 }
 .preview-errors[hidden] { display: none; }
-.btn.small { padding: 5px 10px; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
 
 .preview-drawer { border-top: 1px solid var(--line); font-size: 13px; }
 .preview-drawer summary { padding: 6px 12px; cursor: pointer; color: var(--muted); user-select: none; }

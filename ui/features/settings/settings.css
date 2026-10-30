@@ -1,0 +1,5 @@
+/* settings.css — settings modal controls (form/field basics are in core/base.css). */
+
+.range-row { display: flex; align-items: center; gap: 12px; }
+.range { flex: 1; accent-color: var(--accent); }
+.range-val { min-width: 2.5em; text-align: center; font-variant-numeric: tabular-nums; }

@@ -2,12 +2,16 @@
 // list (grouped by date: today / yesterday / 7 days / 30 days / older),
 // search filter, new chat, open, delete (confirm), rename (double-click),
 // collapse/expand (desktop: remembered in localStorage; mobile: slide-over).
-// Also owns persistConversation(), used by chat.js to PUT conversations.
+// Also owns persistConversation(), used by chat.js to PUT conversations, and the
+// Ctrl+N "new chat" shortcut. Esc: closes the slide-over sidebar on narrow screens.
 
-import { state, on, emit } from "./state.js";
-import * as api from "./api.js";
-import { $, el, iconButton, confirmDialog, toast } from "./dom.js";
-import { t } from "./i18n.js";
+import { state, on, emit } from "../../core/state.js";
+import * as api from "../../core/api.js";
+import { $, el, iconButton, confirmDialog, toast, hasOpenModal } from "../../core/dom.js";
+import { t, registerStrings } from "../../core/i18n.js";
+import strings from "./strings.js";
+
+registerStrings("sidebar", strings);
 
 const COLLAPSE_KEY = "ui.sidebarCollapsed";
 const MOBILE = window.matchMedia("(max-width: 800px)");
@@ -61,6 +65,12 @@ export function initSidebar() {
   MOBILE.addEventListener?.("change", closeMobileSidebar);
   on("conversations", render);
   on("current", render);
+  document.addEventListener("keydown", e => {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "n") {
+      e.preventDefault(); // also blocks WebView2's "new window"
+      if (!hasOpenModal()) newChat();
+    }
+  });
 }
 
 function render() {
@@ -236,3 +246,5 @@ export function closeMobileSidebar() {
   document.body.classList.remove("side-open");
   return wasOpen;
 }
+
+export default { name: "sidebar", init: initSidebar, start: refreshConversations, onEscape: closeMobileSidebar };
