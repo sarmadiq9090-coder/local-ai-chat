@@ -8,12 +8,15 @@ const JSON_HEADERS = { "Content-Type": "application/json" };
 
 async function httpError(res) {
   let message = `HTTP ${res.status}`;
+  let code;
   try {
     const j = await res.json();
     if (j && j.error) message = j.error;
+    if (j && j.code) code = j.code; // e.g. "ollama_unreachable", "corrupt", "reindex_required"
   } catch { /* body was not JSON */ }
   const err = new Error(message);
   err.status = res.status;
+  if (code) err.code = code;
   return err;
 }
 
