@@ -13,6 +13,7 @@ mod export;
 mod settings;
 mod status;
 mod system;
+mod update;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -21,4 +22,5 @@ pub fn router() -> Router<AppState> {
         .merge(conversations::router())
         .merge(export::router())
         .merge(system::router())
+        .merge(update::router())
 }

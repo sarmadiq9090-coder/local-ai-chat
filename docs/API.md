@@ -40,6 +40,8 @@ type Settings = {
   language: "ar" | "en";     // UI language, default "ar" (unknown → "ar"). While system_prompt
                              // equals the other language's built-in default it is swapped to this
                              // language's default on save; a custom prompt is never changed.
+
+  auto_update: boolean;      // check GitHub for a newer release on start + every 6 h, default true
 };
 
 // GPUs: NVIDIA VRAM from nvidia-smi; other adapters from WMI + the driver's registry
@@ -70,3 +72,27 @@ type Message = {
 
 Unknown extra fields on `Conversation` / `Message` must be preserved by the backend (it stores them as-is),
 so the UI can add new fields without backend changes.
+
+## Auto-update — `/api/app/update/...`
+
+Implemented in `src/server/routes/update.rs` + `src/update.rs` (spec: `docs/specs/auto-update.md`).
+Source: GitHub `releases/latest` of `sarmadiq9090-coder/local-ai-chat` (const `update::REPO`), assets
+`local-ai-chat.exe` + `local-ai-chat.exe.sha256` (`<hex>  local-ai-chat.exe`). Dev/test override: env var
+`LOCALAI_UPDATE_FEED=<url>` returning JSON shaped like a GitHub release.
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/api/app/update/check` | – | `UpdateCheck`. Query: `force=1` bypasses the 10-min cache; `local=1` skips the network (cached result or just `current`). Network problems never give a 5xx: `available: false` + `error`. No release / repo not found (404) → `available: false`, no `error`. |
+| POST | `/api/app/update/install` | – | NDJSON stream: `{ "status": "downloading", "downloaded": number, "total": number \| null }` … `{ "status": "verifying" }` … `{ "status": "restarting" }`, or a final `{ "error": string }` (no update, download failed, checksum mismatch, swap failed — the current exe is left in place). After `restarting` the exe was swapped (old one → `local-ai-chat.old.exe`), the new exe was started with `--after-update` (plus `--serve <port>` in dev mode) and this process exits ~1 s later. |
+
+```ts
+type UpdateCheck = {
+  current: string;            // this build, e.g. "2.0.0"
+  latest?: string;            // latest release version without "v"
+  available: boolean;         // latest > current (semver)
+  notes?: string;             // release notes (Markdown)
+  published_at?: string;      // ISO 8601
+  error?: string;             // check failed (offline, rate limit, bad release)
+  just_updated?: string;      // set once after a restart into a new version (from --after-update)
+};
+```

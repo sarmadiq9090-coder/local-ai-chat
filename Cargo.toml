@@ -18,10 +18,11 @@ dirs = "7.0.0"
 futures-util = "0.3.34"
 mime_guess = "2.0.5"
 pdf-extract = "0.12.1"
-reqwest = { version = "0.13.5", default-features = false, features = ["stream", "json"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["stream", "json", "rustls"] }
 rust-embed = "8.13.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+sha2 = "0.10.9"
 tao = "0.37.2"
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "sync", "fs", "time", "process"] }
 uuid = { version = "1.29.0", features = ["v4"] }

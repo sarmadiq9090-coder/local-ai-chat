@@ -67,6 +67,8 @@ pub struct Settings {
     pub think: bool,
     /// UI language: "ar" (default) or "en". Unknown values become "ar".
     pub language: String,
+    /// Check GitHub for a newer release on start and every 6 h (default on).
+    pub auto_update: bool,
 }
 
 /// Default system prompts per UI language. A prompt still equal to one of these
@@ -85,6 +87,7 @@ impl Default for Settings {
             default_model: None,
             think: false,
             language: "ar".into(),
+            auto_update: true,
         }
     }
 }

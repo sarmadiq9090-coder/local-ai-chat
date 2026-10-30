@@ -22,6 +22,7 @@ mod server;
 mod single_instance;
 mod storage;
 mod system;
+mod update;
 mod window;
 
 use std::sync::mpsc;
@@ -31,12 +32,27 @@ fn main() -> anyhow::Result<()> {
     // window, no single-instance lock). In debug builds the UI is read from
     // `ui/` on disk, so UI edits show up on browser refresh without rebuilding.
     let args: Vec<String> = std::env::args().collect();
+    // Started by the updater: clean up the old exe, tell the UI (see update.rs).
+    let after_update = args.iter().any(|a| a == update::AFTER_UPDATE_ARG);
+    if after_update {
+        update::after_update();
+    }
     if args.get(1).is_some_and(|a| a == "--serve") {
         let port = args.get(2).and_then(|p| p.parse().ok()).unwrap_or(8790);
+        update::set_relaunch_args(vec!["--serve".into(), port.to_string()]);
+        if after_update {
+            update::wait_for_port(port);
+        }
         return serve_only(port);
     }
 
-    let Some(_instance) = single_instance::acquire() else {
+    // After an update the old instance may still be exiting: wait for its mutex.
+    let instance = if after_update {
+        single_instance::acquire_wait(std::time::Duration::from_secs(10))
+    } else {
+        single_instance::acquire()
+    };
+    let Some(_instance) = instance else {
         return Ok(()); // already running: the existing window was focused
     };
     let paths = config::Paths::resolve()?;

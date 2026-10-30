@@ -83,3 +83,9 @@ export const chatStream = (payload, signal) => streamPost("/api/ollama/chat", { 
 
 /** Stream a model download. Yields {status, digest?, total?, completed?}. */
 export const pullModel = (model, signal) => streamPost("/api/ollama/pull", { model, stream: true }, signal);
+
+// ---------- update (features/update) ----------
+/** Update check. params: {force:1} skips the 10-min cache, {local:1} skips the network. */
+export const getUpdateInfo = (params = {}) => request("GET", `/api/app/update/check?${new URLSearchParams(params)}`);
+/** Install the available update. Yields {status:"downloading", downloaded, total} | {status:"verifying"} | {status:"restarting"}. */
+export const installUpdate = signal => streamPost("/api/app/update/install", {}, signal);

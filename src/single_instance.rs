@@ -42,6 +42,37 @@ pub fn acquire() -> Option<Guard> {
     Some(Guard {})
 }
 
+/// Like [`acquire`], but first waits up to `timeout` for a running instance to
+/// exit (used after an update, while the old process is shutting down).
+#[cfg(windows)]
+pub fn acquire_wait(timeout: std::time::Duration) -> Option<Guard> {
+    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError};
+    use windows_sys::Win32::System::Threading::CreateMutexW;
+
+    let name = wide("Local\\LocalAiChat.SingleInstance");
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        // SAFETY: as in `acquire`; the handle to an existing mutex is closed so
+        // the object can disappear once the old process exits.
+        unsafe {
+            let handle = CreateMutexW(std::ptr::null(), 0, name.as_ptr());
+            if GetLastError() != ERROR_ALREADY_EXISTS {
+                return Some(Guard { _handle: handle });
+            }
+            if !handle.is_null() {
+                CloseHandle(handle);
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    acquire()
+}
+
+#[cfg(not(windows))]
+pub fn acquire_wait(_timeout: std::time::Duration) -> Option<Guard> {
+    acquire()
+}
+
 #[cfg(windows)]
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()

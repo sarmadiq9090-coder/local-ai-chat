@@ -35,6 +35,7 @@ export const DEFAULT_SETTINGS = {
   default_model: null,
   think: false,
   language: "ar",
+  auto_update: true,
 };
 
 const CTX_OPTIONS = [2048, 4096, 8192, 16384, 32768];
@@ -184,6 +185,7 @@ export function openSettings(draft) {
       setLanguage(state.settings?.language);
     },
   });
+  emit("settings-open", m.body.firstChild); // other features may append a section to the form (e.g. update)
 }
 
 export default {

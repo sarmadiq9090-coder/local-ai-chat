@@ -12,7 +12,12 @@ use crate::config::Paths;
 use crate::single_instance::WINDOW_TITLE;
 
 pub fn run(url: &str, paths: &Paths) -> anyhow::Result<()> {
+    // User event `()` = quit (sent by the updater from the server thread).
     let event_loop = EventLoop::new();
+    let proxy = std::sync::Mutex::new(event_loop.create_proxy());
+    crate::update::set_exit_handler(move || {
+        let _ = proxy.lock().map(|p| p.send_event(()));
+    });
     let window = WindowBuilder::new()
         .with_title(WINDOW_TITLE)
         .with_inner_size(LogicalSize::new(1200.0, 820.0))
@@ -43,8 +48,11 @@ pub fn run(url: &str, paths: &Paths) -> anyhow::Result<()> {
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
-        if let Event::WindowEvent { event: WindowEvent::CloseRequested, .. } = event {
-            *control_flow = ControlFlow::Exit;
+        match event {
+            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } | Event::UserEvent(()) => {
+                *control_flow = ControlFlow::Exit;
+            }
+            _ => {}
         }
     });
 }

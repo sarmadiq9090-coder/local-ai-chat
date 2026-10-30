@@ -21,6 +21,7 @@ import settings from "./settings/settings.js";
 import status from "./status/status.js";
 import exporter from "./exporter/exporter.js";
 import code from "./code/code.js";
+import update from "./update/update.js";
 
 export default [
   models,        // Esc 1: model dropdown
@@ -32,4 +33,5 @@ export default [
   status,
   exporter,
   code,
+  update,
 ];
