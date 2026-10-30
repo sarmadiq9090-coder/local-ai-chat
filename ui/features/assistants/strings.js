@@ -215,3 +215,9 @@ export const NOT_IN_KNOWLEDGE = {
   ar: "لا توجد هذه المعلومة في المعرفة التي أُعطيت لي.",
   en: "That information isn't in the knowledge I was given.",
 };
+
+/** Per-turn reply-language rule, in the language of the last question (not the chat history). */
+export const REPLY_LANGUAGE = {
+  ar: "مهم: السؤال الأخير بالعربية، فاكتب ردّك بالعربية فقط مهما كانت لغة المصادر أو الرسائل السابقة.",
+  en: "Important: the last question is in English, so write your reply in English only, whatever the language of the sources or earlier messages.",
+};

@@ -24,14 +24,19 @@ async fn put_settings(
     if !patch.is_object() {
         return Err(ApiError::bad_request("settings must be a JSON object"));
     }
+    // Only a request that sets the URL is checked, so a bad stored URL never
+    // blocks unrelated saves (e.g. picking a model).
+    let sets_url = patch.get("ollama_url").is_some();
     // Hold the lock across merge + save + assign so disk and memory never disagree
     // and concurrent partial updates don't lose each other's fields.
     let mut current = s.settings.write().await;
     let new = current
         .merged(patch)
         .map_err(|e| ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, format!("{e:#}")))?;
-    new.validate()
-        .map_err(|m| ApiError::bad_request(m).with_code("invalid_ollama_url"))?;
+    if sets_url {
+        new.validate()
+            .map_err(|m| ApiError::bad_request(m).with_code("invalid_ollama_url"))?;
+    }
     let new = new.sanitized();
     new.save(&s.paths.settings_file)?;
     *current = new.clone();

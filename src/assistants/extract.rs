@@ -109,12 +109,15 @@ fn mirror(c: char) -> char {
 
 /// Map presentation forms to base letters (NFKC on those chars only, so other
 /// text such as `²` or `ﬁ` is left alone). Farsi-yeh forms, which some fonts
-/// use for the Arabic ي, become ي.
+/// use for the Arabic ي, become ي; heh-doachashmee forms (U+FBAA–U+FBAD, NFKC
+/// would give Urdu ھ), which some fonts use for the Arabic ه, become ه.
 fn unshape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         if matches!(c, '\u{FBFC}'..='\u{FBFF}') {
             out.push('ي');
+        } else if matches!(c, '\u{FBAA}'..='\u{FBAD}' | '\u{06BE}') {
+            out.push('ه');
         } else if is_presentation_form(c) {
             out.extend(c.to_string().nfkc());
         } else {
@@ -409,6 +412,16 @@ pub fn normalize(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn heh_doachashmee_becomes_arabic_heh() {
+        // «لأهلية» with a heh-doachashmee medial form, and «شهادة» with the Urdu ھ.
+        assert_eq!(
+            unshape("\u{FEDF}\u{FE84}\u{FBAC}\u{FEE0}\u{FEF4}\u{FE94}"),
+            "لأهلية"
+        );
+        assert_eq!(unshape("ش\u{06BE}ادة"), "شهادة");
+    }
 
     #[test]
     fn normalize_whitespace_and_nuls() {

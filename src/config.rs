@@ -107,37 +107,62 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// Missing file → defaults. Corrupt file → renamed to
-    /// `settings.json.corrupt-<unix seconds>` (kept for the user, logged) and
-    /// defaults are used, so it is never silently overwritten.
+    /// Missing file → defaults. A file that isn't a JSON object is renamed to
+    /// `settings.json.corrupt-<unix ms>` and defaults are used. In an object,
+    /// only the fields that fail (wrong type, unknown enum value, invalid
+    /// `ollama_url`) fall back to their defaults; the original file is copied
+    /// to a `.corrupt-<unix ms>` backup first, so nothing is silently lost.
     pub fn load(path: &Path) -> Self {
         let Ok(bytes) = std::fs::read(path) else {
             return Self::default();
         };
-        match serde_json::from_slice(&bytes) {
-            Ok(s) => s,
-            Err(e) => {
-                let secs = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                let mut name = path.as_os_str().to_owned();
-                name.push(format!(".corrupt-{secs}"));
-                let backup = PathBuf::from(name);
+        let obj = match serde_json::from_slice::<serde_json::Value>(&bytes) {
+            Ok(serde_json::Value::Object(obj)) => obj,
+            Ok(_) | Err(_) => {
+                let backup = corrupt_backup_path(path);
                 match std::fs::rename(path, &backup) {
                     Ok(()) => eprintln!(
-                        "settings: {} is corrupt ({e}); moved to {}, using defaults",
+                        "settings: {} is corrupt; moved to {}, using defaults",
                         path.display(),
                         backup.display()
                     ),
                     Err(re) => eprintln!(
-                        "settings: {} is corrupt ({e}); backup failed ({re}), using defaults",
+                        "settings: {} is corrupt; backup failed ({re}), using defaults",
                         path.display()
                     ),
                 }
-                Self::default()
+                return Self::default();
+            }
+        };
+        let (settings, dropped) = Self::default().merged_lenient(obj);
+        if !dropped.is_empty() {
+            let backup = corrupt_backup_path(path);
+            let _ = std::fs::copy(path, &backup);
+            eprintln!(
+                "settings: invalid field(s) {dropped:?} reset to defaults; original kept as {}",
+                backup.display()
+            );
+        }
+        settings
+    }
+
+    /// `self` with every valid field of `obj` applied; returns the names of the
+    /// fields that were ignored because they don't fit (wrong type, bad URL).
+    fn merged_lenient(
+        &self,
+        obj: serde_json::Map<String, serde_json::Value>,
+    ) -> (Self, Vec<String>) {
+        let mut out = self.clone();
+        let mut dropped = Vec::new();
+        for (key, value) in obj {
+            let mut one = serde_json::Map::new();
+            one.insert(key.clone(), value);
+            match out.merged(serde_json::Value::Object(one)) {
+                Ok(next) if key != "ollama_url" || next.validate().is_ok() => out = next,
+                _ => dropped.push(key),
             }
         }
+        (out, dropped)
     }
 
     /// `self` with the top-level fields of `patch` (a JSON object) applied:
@@ -192,6 +217,26 @@ impl Settings {
         }
         self
     }
+}
+
+/// `<file>.corrupt-<unix ms>` next to `path`, never an existing file.
+fn corrupt_backup_path(path: &Path) -> PathBuf {
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    (0u32..)
+        .map(|n| {
+            let mut name = path.as_os_str().to_owned();
+            name.push(if n == 0 {
+                format!(".corrupt-{ms}")
+            } else {
+                format!(".corrupt-{ms}-{n}")
+            });
+            PathBuf::from(name)
+        })
+        .find(|p| !p.exists())
+        .expect("a free backup name")
 }
 
 /// Write via a temp file + rename so a crash never leaves a half-written file.
@@ -287,6 +332,32 @@ mod language_tests {
         assert!(with("ftp://host").validate().is_err());
         assert!(with("http://").validate().is_err());
         assert!(with("not a url").validate().is_err());
+    }
+
+    #[test]
+    fn one_bad_field_keeps_the_others() {
+        let dir = std::env::temp_dir().join(format!("lac-settings-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("settings.json");
+        std::fs::write(
+            &file,
+            br#"{"language":"en","temperature":"hot","theme":"auto","ollama_url":"localhost:11434","default_model":"m"}"#,
+        )
+        .unwrap();
+        let s = Settings::load(&file);
+        assert_eq!(s.language, "en");
+        assert_eq!(s.default_model.as_deref(), Some("m"));
+        assert_eq!(s.temperature, Settings::default().temperature);
+        assert_eq!(s.theme, Settings::default().theme);
+        assert_eq!(s.ollama_url, Settings::default().ollama_url);
+        assert!(file.exists(), "original stays in place");
+        let backups = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".corrupt-"))
+            .count();
+        assert_eq!(backups, 1);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

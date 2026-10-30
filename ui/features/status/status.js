@@ -30,11 +30,17 @@ function showBanner(show) {
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 /** Ask the backend whether Ollama is up; load models, or show the banner and keep polling. */
+let recheck = false; // a check was requested while one was in flight (e.g. the Ollama URL changed)
+
 export async function checkStatus() {
-  if (connecting) return;
+  if (connecting) { recheck = true; return; }
   setStatus(t("statusConnecting"));
   connecting = true;
-  const status = await api.getStatus().catch(() => null);
+  let status;
+  do {
+    recheck = false;
+    status = await api.getStatus().catch(() => null);
+  } while (recheck);
   connecting = false;
   await applyStatus(status);
 }

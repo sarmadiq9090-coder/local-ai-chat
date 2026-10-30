@@ -20,7 +20,7 @@ import { t, registerStrings, getLanguage } from "../../core/i18n.js";
 import { closeMobileSidebar } from "../sidebar/sidebar.js";
 import { loadModels, toGB, modelInstalled, loadCaps } from "../models/models.js";
 import { send } from "../chat/chat.js";
-import strings, { NOT_IN_KNOWLEDGE } from "./strings.js";
+import strings, { NOT_IN_KNOWLEDGE, REPLY_LANGUAGE } from "./strings.js";
 
 registerStrings("assistants", strings);
 
@@ -32,7 +32,6 @@ const FILE_ACCEPT = FILE_EXTS.map(e => "." + e).join(",");
 const SNIPPET_CHARS = 280;
 /** A last question shorter than this is a follow-up: the previous turn joins the search query. */
 const SHORT_QUERY = 60;
-const PREV_REPLY_CHARS = 200;
 
 let assistants = []; // Assistant[] (newest first)
 let listEl, chipEl;
@@ -281,12 +280,15 @@ export function isNotInKnowledge(text) {
 
 /** System message: instructions + strict/soft rules + numbered sources (or an explicit "no sources"). */
 export function buildAssistantSystem(a, results, question) {
-  const sentence = NOT_IN_KNOWLEDGE[detectLang(question)];
+  const lang = detectLang(question);
+  const sentence = NOT_IN_KNOWLEDGE[lang];
+  // Last, so it wins over the language of earlier turns in a mixed-language chat.
+  const replyIn = REPLY_LANGUAGE[lang];
   if (!results.length) {
     // No passage passed the threshold: say so plainly and forbid citations, so the model
     // doesn't answer from earlier turns and cite "[1]".
     const rules = a.strict ? t("asst_strictNoSources", { sentence }) : t("asst_softNoSources");
-    return [(a.instructions || "").trim(), `## ${t("asst_rulesHead")}\n${rules}`].filter(Boolean).join("\n\n");
+    return [(a.instructions || "").trim(), `## ${t("asst_rulesHead")}\n${rules}`, replyIn].filter(Boolean).join("\n\n");
   }
   const rules = a.strict ? t("asst_strictRules", { sentence }) : t("asst_softRules");
   const sources = results.map((r, i) => `[${t("asst_srcLabel")} ${i + 1}: ${r.doc_name}]\n${r.text}`).join("\n\n");
@@ -294,6 +296,7 @@ export function buildAssistantSystem(a, results, question) {
     (a.instructions || "").trim(),
     `## ${t("asst_rulesHead")}\n${rules}`,
     `## ${t("asst_sourcesHead")}\n${sources}`,
+    replyIn,
   ].filter(Boolean).join("\n\n");
 }
 
@@ -310,8 +313,8 @@ export function isFollowUp(text) {
 
 /**
  * The knowledge-search query for the next reply: the last user message; when it is a short
- * follow-up ("and used products?", «وبدل السكن؟»), the previous user message and the start of
- * the last reply are added so the search knows what it refers to. prepareAssistantTurn also
+ * follow-up ("and used products?", «وبدل السكن؟»), the previous user message is
+ * added so the search knows what it refers to. prepareAssistantTurn also
  * searches the bare message, so a wrongly detected follow-up only adds candidates.
  */
 export function retrievalQuery(messages) {
@@ -321,15 +324,14 @@ export function retrievalQuery(messages) {
   if (li < 0) return "";
   const last = msgs[li].content.trim();
   if (!isFollowUp(last)) return last;
-  let prevUser = "", prevReply = "";
+  // Only the previous question is added: the previous *reply* dominated the query embedding
+  // and pulled results back to the old topic (e.g. «و الضمان؟» after a battery answer).
+  let prevUser = "";
   for (let i = li - 1; i >= 0; i--) {
     const m = msgs[i];
-    if (!prevReply && !prevUser && m.role === "assistant" && !isNotInKnowledge(m.content)) {
-      prevReply = m.content.trim().slice(0, PREV_REPLY_CHARS);
-    }
     if (m.role === "user" && m.content?.trim()) { prevUser = m.content.trim(); break; }
   }
-  return [prevUser, prevReply, last].filter(Boolean).join("\n");
+  return [prevUser, last].filter(Boolean).join("\n");
 }
 
 /** Re-index an assistant from the chat (stale index); resolves true on success. */

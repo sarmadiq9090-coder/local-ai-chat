@@ -110,7 +110,8 @@ export function initChat() {
   sendBtn.addEventListener("click", () => (state.streaming ? stopGeneration() : send()));
 
   $("#attachBtn").addEventListener("click", () => $("#fileInput").click());
-  $("#fileInput").addEventListener("change", e => { addFiles(e.target.files); e.target.value = ""; });
+  // Copy the FileList first: clearing the input empties the live list while addFiles still awaits.
+  $("#fileInput").addEventListener("change", e => { addFiles([...e.target.files]); e.target.value = ""; });
   $("#cancelEdit").addEventListener("click", () => cancelEdit(true));
   $("#toBottom").addEventListener("click", () => { stickToBottom = true; scrollToBottom(true, true); });
 

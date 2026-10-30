@@ -71,7 +71,7 @@ const baseName = u => u.trim().split(/[?#]/)[0].split("/").pop().toLowerCase();
 
 /**
  * Sibling blocks to inline for a `<link href>` / `<script src>` reference: the only unused block
- * of that type, else blocks that mention the file name in their first lines, else all unused ones.
+ * of that type, else blocks that mention the file name in their first lines, else the next unused one.
  * Marks the chosen blocks as used. Returns their joined code ("" = nothing to inline).
  */
 function pickSiblings(blocks, used, ref, sep) {
@@ -79,7 +79,9 @@ function pickSiblings(blocks, used, ref, sep) {
   if (!free.length) return "";
   const name = baseName(ref);
   let chosen = free.length === 1 ? free : free.filter(b => name && b.code.split("\n", 3).join("\n").toLowerCase().includes(name));
-  if (!chosen.length) chosen = free;
+  // No name match: take the next block in order (each further reference takes the next one),
+  // so an unrelated example block later in the message isn't pulled in.
+  if (!chosen.length) chosen = free.slice(0, 1);
   chosen.forEach(b => used.add(b));
   return chosen.map(b => b.code).join(sep);
 }
@@ -105,6 +107,7 @@ export function buildDocument(lang, code, siblings = []) {
   const hasOwnStyle = /<style[\s>]/i.test(code);
   const hasInlineScript = [...code.matchAll(INLINE_SCRIPT)].some(m => m[1].trim());
   const usedCss = new Set(), usedJs = new Set();
+  let linkedLocal = false; // the page references local files itself (styles.css, script.js…)
   const early = [], deferred = []; // moved to the end of <body>: from <head> / with `defer` (in that order)
 
   // Mark the page's own inline scripts with their starting line (see BRIDGE: error line numbers).
@@ -116,6 +119,7 @@ export function buildDocument(lang, code, siblings = []) {
     if (!/\srel\s*=\s*["']?stylesheet/i.test(tag)) return tag;
     const href = attrOf(tag, "href");
     if (!isLocalRef(href)) return tag;
+    linkedLocal = true;
     const css = pickSiblings(cssBlocks, usedCss, href, "\n");
     return css ? `<style>${css.replace(/<\/style/gi, "<\\/style")}</style>` : "";
   });
@@ -123,6 +127,7 @@ export function buildDocument(lang, code, siblings = []) {
   html = html.replace(/<script\b([^>]*)>\s*<\/script\s*>/gi, (tag, attrs, offset) => {
     const src = attrOf(tag, "src");
     if (!isLocalRef(src)) return tag;
+    linkedLocal = true;
     const js = pickSiblings(jsBlocks, usedJs, src, "\n;\n");
     if (!js) return "";
     const module = /\stype\s*=\s*["']?module/i.test(attrs) ? ' type="module"' : "";
@@ -136,9 +141,14 @@ export function buildDocument(lang, code, siblings = []) {
   let doc = /<html[\s>]/i.test(html) ? html : `<!doctype html><html><head></head><body>${html}</body></html>`;
   if (!/<head[\s>]/i.test(doc)) doc = doc.replace(/<html[^>]*>/i, m => `${m}<head></head>`);
   doc = doc.replace(/<head[^>]*>/i, m => `${m}${base}`);
-  const css = cssBlocks.filter(b => !usedCss.has(b)).map(b => b.code).join("\n");
+  // Unreferenced sibling blocks are added only when they surely belong to this page: it links
+  // no local files itself (if it does, it said what it needs) and it is the message's only HTML
+  // block (otherwise e.g. a separate JS example would run inside an unrelated page).
+  const onlyPage = !siblings.some(s => /^(html?|xhtml)$/.test(s.lang));
+  const mergeRest = onlyPage && !linkedLocal;
+  const css = mergeRest ? cssBlocks.filter(b => !usedCss.has(b)).map(b => b.code).join("\n") : "";
   if (css && !hasOwnStyle) doc = doc.replace(/<\/head>/i, () => `<style>${css.replace(/<\/style/gi, "<\\/style")}</style></head>`);
-  const js = hasInlineScript ? "" : jsBlocks.filter(b => !usedJs.has(b)).map(b => b.code).join("\n;\n");
+  const js = hasInlineScript || !mergeRest ? "" : jsBlocks.filter(b => !usedJs.has(b)).map(b => b.code).join("\n;\n");
   const tail = early.join("") + deferred.join("") + (js ? `<script>${escapeScript(js)}<\/script>` : "");
   if (tail) doc = /<\/body>/i.test(doc) ? doc.replace(/<\/body>(?![\s\S]*<\/body>)/i, () => `${tail}</body>`) : doc + tail;
   return doc;
