@@ -5,7 +5,7 @@
 import { state } from "../../core/state.js";
 import * as api from "../../core/api.js";
 import { $, toast } from "../../core/dom.js";
-import { t, registerStrings } from "../../core/i18n.js";
+import { t, registerStrings, getLanguage } from "../../core/i18n.js";
 import strings from "./strings.js";
 
 registerStrings("exporter", strings);
@@ -19,7 +19,7 @@ export function fenceFor(s) {
 /** Conversation → Markdown string. Pure. */
 export function conversationToMarkdown(conv) {
   const out = [`# ${conv.title || t("untitled")}`, ""];
-  if (conv.created_at) out.push(`*${new Date(conv.created_at).toLocaleString("ar")}*`, "");
+  if (conv.created_at) out.push(`*${new Date(conv.created_at).toLocaleString(getLanguage())}*`, "");
   for (const m of conv.messages || []) {
     if (m.role === "user") {
       out.push(`## ${t("you")}`, "", m.content || "", "");

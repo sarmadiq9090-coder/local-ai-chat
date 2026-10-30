@@ -7,7 +7,7 @@
 //   the open (or about-to-be-created) chat; chat.js copies it onto new conversations and calls
 //   prepareAssistantTurn() before generating and sourcesEl() to render `sources` under replies.
 //   A chip in the top bar shows the active assistant.
-// Cross-feature deps: sidebar (closeMobileSidebar), models (loadModels, toGB).
+// Cross-feature deps: sidebar (closeMobileSidebar), models (loadModels, toGB, modelInstalled, loadCaps).
 // Events: listens to "current", "models", "language"; emits "current", "focus-composer", "assistants".
 
 import { state, on, emit } from "../../core/state.js";
@@ -16,7 +16,7 @@ import { $, el, iconButton, toast, openModal, confirmDialog } from "../../core/d
 import { icon } from "../../core/icons.js";
 import { t, registerStrings } from "../../core/i18n.js";
 import { closeMobileSidebar } from "../sidebar/sidebar.js";
-import { loadModels, toGB } from "../models/models.js";
+import { loadModels, toGB, modelInstalled, loadCaps } from "../models/models.js";
 import strings, { NOT_IN_KNOWLEDGE } from "./strings.js";
 
 registerStrings("assistants", strings);
@@ -202,10 +202,13 @@ export async function prepareAssistantTurn(conv, signal) {
       toast(e.missingModel ? t("asst_modelMissing", { name: e.missingModel }) : t("asst_searchFailed", { error: e.message }), "error", 7000);
     }
   }
-  const installed = new Set(state.models.map(m => m.name));
+  // The assistant's preferred model, if installed (":latest" aware); its capabilities are
+  // fetched now so chat.js can check supportsThinking() for it.
+  const model = a.model && modelInstalled(a.model) ? a.model : null;
+  if (model) await loadCaps(model);
   return {
     system: buildAssistantSystem(a, results, question),
-    model: a.model && installed.has(a.model) ? a.model : null,
+    model,
     sources: results.map((r, i) => ({
       n: i + 1,
       doc_name: r.doc_name,
@@ -234,10 +237,6 @@ const field = (label, control) => el("label", { class: "field" }, el("span", { c
 
 const isEmbedName = n => /embed|bge|minilm|nomic|e5-/i.test(n);
 
-function modelInstalled(name) {
-  const names = state.models.map(m => m.name);
-  return names.includes(name) || (!name.includes(":") && names.includes(name + ":latest"));
-}
 
 /** Open the editor for `a` (an Assistant) or for a new assistant (null). */
 export function openEditor(a) {

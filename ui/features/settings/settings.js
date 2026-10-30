@@ -55,10 +55,23 @@ let markLoaded;
 /** Resolves once the first loadSettings() has finished (startup ordering). */
 export const settingsLoaded = new Promise(resolve => { markLoaded = resolve; });
 
+// True once settings were read from the backend. Until then state.settings holds
+// defaults, and saving them would overwrite the real file: saveSettings() retries the load first.
+let loadedFromServer = false;
+// True while the settings dialog is open: it owns the live theme/language preview, so saves made
+// meanwhile (e.g. the auto-update toggle) must not re-apply the saved theme/language over it.
+let previewing = false;
+
+async function fetchSettings() {
+  const s = (await api.getSettings()) || {};
+  loadedFromServer = true;
+  return s;
+}
+
 /** Fetch settings from the backend (defaults on failure) and apply the theme. */
 export async function loadSettings() {
   let s = {};
-  try { s = (await api.getSettings()) || {}; } catch (e) { console.warn("settings load failed", e); }
+  try { s = await fetchSettings(); } catch (e) { loadedFromServer = false; console.warn("settings load failed", e); }
   state.settings = { ...DEFAULT_SETTINGS, ...s };
   applyTheme(state.settings.theme);
   setLanguage(state.settings.language);
@@ -71,6 +84,15 @@ export async function loadSettings() {
 let saveChain = Promise.resolve();
 
 export async function saveSettings(patch) {
+  if (!loadedFromServer) {
+    // Startup load failed: never PUT defaults over the real file. Retry the load first.
+    try {
+      state.settings = { ...DEFAULT_SETTINGS, ...(await fetchSettings()) };
+    } catch (e) {
+      toast(t("settingsLoadFailed", { error: e.message }), "error");
+      throw e;
+    }
+  }
   state.settings = { ...state.settings, ...patch };
   // Serialize saves so a slower earlier response can't overwrite a newer one.
   const snapshot = { ...state.settings };
@@ -83,8 +105,10 @@ export async function saveSettings(patch) {
     toast(t("settingsSaveFailed", { error: e.message }), "error");
     throw e;
   } finally {
-    applyTheme(state.settings.theme);
-    setLanguage(state.settings.language);
+    if (!previewing) {
+      applyTheme(state.settings.theme);
+      setLanguage(state.settings.language);
+    }
     emit("settings");
   }
   return state.settings;
@@ -98,6 +122,7 @@ const field = (label, control, extra) =>
  * dialog rebuilds itself after a live language switch.
  */
 export function openSettings(draft) {
+  previewing = true;
   const s = { ...(state.settings || DEFAULT_SETTINGS), ...(draft || {}) };
 
   const prompt = el("textarea", { rows: 6, dir: "auto", class: "input" });
@@ -159,6 +184,9 @@ export function openSettings(draft) {
         ollama_url: url.value.trim() || DEFAULT_SETTINGS.ollama_url,
       });
       saved = true;
+      previewing = false;
+      applyTheme(state.settings.theme);
+      setLanguage(state.settings.language);
       toast(t("saved"), "success");
       m.close(true);
       if (state.settings.ollama_url !== oldUrl) emit("ollama-url-changed");
@@ -180,7 +208,9 @@ export function openSettings(draft) {
       field(t("ollamaUrl"), url)),
     actions: [cancelBtn, saveBtn],
     onClose: () => { // undo live previews
-      if (saved || rebuilding) return;
+      if (rebuilding) return; // reopened right away in the new language
+      previewing = false;
+      if (saved) return;
       applyTheme(state.settings?.theme);
       setLanguage(state.settings?.language);
     },

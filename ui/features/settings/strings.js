@@ -18,6 +18,7 @@ export default {
     save: "حفظ",
     saved: "تم حفظ الإعدادات",
     settingsSaveFailed: "تعذّر حفظ الإعدادات: {error}",
+    settingsLoadFailed: "تعذّر تحميل الإعدادات، فلم يُحفظ التغيير: {error}",
   },
   en: {
     settings: "Settings",
@@ -34,5 +35,6 @@ export default {
     save: "Save",
     saved: "Settings saved",
     settingsSaveFailed: "Couldn't save settings: {error}",
+    settingsLoadFailed: "Couldn't load settings, so the change wasn't saved: {error}",
   },
 };

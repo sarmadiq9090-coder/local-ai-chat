@@ -22,8 +22,20 @@ registerStrings("models", strings);
 /** Bytes → "4.7" (GB, one decimal). Pure. */
 export const toGB = bytes => (Number(bytes || 0) / 1024 ** 3).toFixed(1);
 
-/** Does the given model support Ollama's `think` option? */
+/** Does the given model support Ollama's `think` option? (needs loadCaps(name) first) */
 export const supportsThinking = name => (state.caps[name] || []).includes("thinking");
+
+/** Is `name` installed? A tag-less name also matches its ":latest" tag. */
+export const modelInstalled = name => !!name && state.models.some(m => m.name === name || m.name === `${name}:latest`);
+
+/** Fetch and cache (state.caps) the capabilities of `name` once; [] if unknown. */
+export async function loadCaps(name) {
+  if (name && !(name in state.caps)) {
+    try { state.caps[name] = (await api.showModel(name))?.capabilities || []; }
+    catch { state.caps[name] = []; }
+  }
+  return state.caps[name] || [];
+}
 
 let menuOpen = false;
 
@@ -60,10 +72,7 @@ export async function loadModels() {
 export async function selectModel(name, remember = true) {
   state.model = name;
   renderModelButton();
-  if (name && !(name in state.caps)) {
-    try { state.caps[name] = (await api.showModel(name))?.capabilities || []; }
-    catch { state.caps[name] = []; }
-  }
+  await loadCaps(name);
   updateThinkToggle();
   emit("model", name);
   if (remember && name && state.settings?.default_model !== name) {
@@ -236,7 +245,6 @@ let systemInfo = null; // GET /api/app/system, cached after the first success
 
 const fmtGb = x => String(Math.round(x * 10) / 10);
 const levelRank = r => (r ? LEVELS.indexOf(r.level) : 0);
-const isInstalled = name => state.models.some(m => m.name === name || m.name === `${name}:latest`);
 
 /**
  * Hardware line + explanation + catalog <select> (grouped by category, best first)
@@ -274,7 +282,7 @@ function suggestionPicker(input) {
         fact(t("suggestParams"), m.params),
         m.moe && fact("MoE", t("suggestActive", { active: m.activeParams })),
         fact(t("suggestArabic"), t(`arabic_${m.arabic}`)),
-        isInstalled(m.name) && el("span", { class: "suggest-fact" }, `✔ ${t("suggestInstalled")}`)),
+        modelInstalled(m.name) && el("span", { class: "suggest-fact" }, `✔ ${t("suggestInstalled")}`)),
       r && el("p", { class: "suggest-reason" }, r.reason));
   };
 
@@ -288,7 +296,7 @@ function suggestionPicker(input) {
           .sort((a, b) => levelRank(a.r) - levelRank(b.r)
             || (levelRank(a.r) >= 2 ? a.m.sizeGb - b.m.sizeGb : b.m.sizeGb - a.m.sizeGb))
           .map(({ m, r }) => el("option", { value: m.name },
-            [m.name, `${m.sizeGb} GB`, r?.short, isInstalled(m.name) && t("suggestInstalled")].filter(Boolean).join(" · "))))));
+            [m.name, `${m.sizeGb} GB`, r?.short, modelInstalled(m.name) && t("suggestInstalled")].filter(Boolean).join(" · "))))));
     const typed = input.value.trim();
     select.value = CATALOG.some(m => m.name === typed) ? typed : "";
     renderCard();

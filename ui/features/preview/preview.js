@@ -1,6 +1,8 @@
 // preview.js — live preview panel (like Claude's Artifacts) for HTML / SVG / JS
 // code blocks. Clicking "تشغيل" on a code block builds a document and runs it
-// in a sandboxed iframe (no same-origin access to the app or its API).
+// in a sandboxed iframe (no same-origin access to the app or its API). The iframe loads
+// frame.html, which signals "ready" and receives the document via postMessage: a real
+// document does not inherit index.html's CSP (a srcdoc one would block its scripts).
 // Console output and runtime errors are forwarded via postMessage and shown in
 // a console drawer; "اطلب الإصلاح" sends the errors back to the model.
 // Esc: closes the panel. The "تشغيل" button itself is rendered by core/markdown.js
@@ -18,9 +20,11 @@ registerStrings("preview", strings);
 
 const WIDTH_KEY = "previewWidth";
 const MAX_LOGS = 200;
+const FRAME_URL = new URL("./frame.html", import.meta.url).href;
 
 let panel, frame, consoleEl, errorBar, errorCount;
 let current = null;  // { lang, code, siblings }
+let pendingDoc = null; // document to hand to frame.html once it says "ready"
 let logs = [];
 
 /** Injected first into every preview: forwards console + errors to the app. */
@@ -106,6 +110,11 @@ export function initPreview() {
 
   window.addEventListener("message", e => {
     if (e.source !== frame.contentWindow || !e.data?.__preview) return;
+    if (e.data.type === "ready") {
+      if (pendingDoc != null) frame.contentWindow.postMessage({ __previewDoc: pendingDoc }, "*");
+      pendingDoc = null;
+      return;
+    }
     addLog(e.data.type, String(e.data.text ?? ""));
   });
 }
@@ -134,7 +143,8 @@ function run() {
   if (!current) return;
   logs = [];
   renderLogs();
-  frame.srcdoc = buildDocument(current.lang, current.code, current.siblings);
+  pendingDoc = buildDocument(current.lang, current.code, current.siblings);
+  frame.src = FRAME_URL;
   frame.onload = () => frame.focus(); // keyboard games get input immediately
 }
 
@@ -144,7 +154,8 @@ export function closePreview() {
   panel.hidden = true;
   panel.classList.remove("max");
   document.body.classList.remove("previewing");
-  frame.srcdoc = "";
+  pendingDoc = null;
+  frame.src = "about:blank";
   return true;
 }
 

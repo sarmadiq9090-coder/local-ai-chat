@@ -1,0 +1,22 @@
+<!doctype html>
+<!--
+  frame.html — host page for the preview iframe (sandboxed, opaque origin; see preview.js).
+  It is a real same-origin document, so it does NOT inherit index.html's Content-Security-Policy
+  (srcdoc/about:/data:/blob: frames would, and their inline/CDN scripts would be blocked).
+  It announces itself with a "ready" message, receives the document to run and writes it in place.
+-->
+<meta charset="utf-8">
+<script>
+(() => {
+  if (parent === window) return; // opened directly: nothing to do
+  let done = false;
+  addEventListener("message", e => {
+    if (done || e.source !== parent || typeof e.data?.__previewDoc !== "string") return;
+    done = true;
+    document.open();
+    document.write(e.data.__previewDoc);
+    document.close();
+  });
+  parent.postMessage({ __preview: true, type: "ready" }, "*");
+})();
+</script>

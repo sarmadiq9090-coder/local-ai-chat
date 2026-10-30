@@ -27,6 +27,7 @@ const MAX_INPUT_PX = 240;  // composer auto-grow limit
 
 let listEl, msgsEl, inputEl, sendBtn, chipsEl, boxEl;
 let stickToBottom = true;
+let relabelAfterStream = false; // language changed mid-stream: re-render once the reply ends
 
 // ---------- pure helpers ----------
 
@@ -95,8 +96,8 @@ export function initChat() {
     renderExamples();
     updateSendButton();
     // Re-render messages (code-block buttons, action tooltips) unless a reply is streaming.
-    if (state.streaming) renderTitle();
-    else { const top = msgsEl.scrollTop; renderConversation(); msgsEl.scrollTop = top; }
+    if (state.streaming) { relabelAfterStream = true; renderTitle(); }
+    else rerenderKeepingScroll();
   });
 
   renderConversation();
@@ -120,6 +121,13 @@ export function renderConversation() {
   listEl.replaceChildren(...conv.messages.map((m, i) => messageEl(m, i, conv)));
   stickToBottom = true;
   scrollToBottom(true);
+}
+
+/** Re-render the conversation (e.g. new UI language) without jumping the scroll position. */
+function rerenderKeepingScroll() {
+  const top = msgsEl.scrollTop;
+  renderConversation();
+  msgsEl.scrollTop = top;
 }
 
 function renderExamples() {
@@ -447,7 +455,14 @@ async function generate(conv) {
     state.controller = null;
     state.streaming = false;
     emit("streaming", false);
-    if (state.current === conv && aiEl.isConnected) {
+    if (relabelAfterStream) {
+      // The language changed while streaming: older messages still carry the old
+      // labels (Copy/Run, tooltips), so re-render everything now that the reply is done.
+      relabelAfterStream = false;
+      const follow = stickToBottom;
+      rerenderKeepingScroll();
+      if (follow) scrollToBottom(true);
+    } else if (state.current === conv && aiEl.isConnected) {
       aiEl.replaceWith(messageEl(ai, index, conv));
       scrollToBottom();
     }
