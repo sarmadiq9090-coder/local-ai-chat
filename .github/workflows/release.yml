@@ -1,0 +1,90 @@
+name: Release
+
+# Push a tag like `v2.1.0` to build the exe and publish a GitHub Release with
+# `local-ai-chat.exe` + `local-ai-chat.exe.sha256` (the assets the in-app
+# auto-updater downloads and verifies; see docs/specs/auto-update.md).
+#
+#   git tag -a v2.1.0 -m "Release notes in Markdown..."
+#   git push origin v2.1.0
+#
+# The tag must match the `version` in Cargo.toml (checked below).
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history + tags so the annotated tag message is available.
+          fetch-depth: 0
+
+      - name: Fetch annotated tag object
+        shell: bash
+        run: git fetch --force origin "+refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check tag matches Cargo.toml version
+        shell: bash
+        run: |
+          version=$(grep -m1 '^version' Cargo.toml | sed -E 's/version *= *"([^"]+)"/\1/')
+          if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match Cargo.toml version ${version}"
+            exit 1
+          fi
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Build release
+        run: cargo build --release --locked
+
+      - name: Prepare assets
+        shell: bash
+        run: |
+          mkdir dist
+          cp target/release/local-ai-chat.exe dist/
+          cd dist
+          # Format: "<hex>  local-ai-chat.exe" (sha256sum style, lower-case hex)
+          sha256sum local-ai-chat.exe > local-ai-chat.exe.sha256
+          cat local-ai-chat.exe.sha256
+
+      - name: Release notes from tag message
+        id: notes
+        shell: bash
+        run: |
+          # Annotated tag message (empty for lightweight tags or if the message
+          # is just the tag name) -> used as the release body.
+          if [ "$(git cat-file -t "${GITHUB_REF_NAME}")" = "tag" ]; then
+            git tag -l --format='%(contents)' "${GITHUB_REF_NAME}" > notes.md
+          else
+            : > notes.md
+          fi
+          if [ -s notes.md ] && [ "$(tr -d '[:space:]' < notes.md)" != "${GITHUB_REF_NAME}" ]; then
+            echo "has_notes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_notes=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          body_path: ${{ steps.notes.outputs.has_notes == 'true' && 'notes.md' || '' }}
+          generate_release_notes: ${{ steps.notes.outputs.has_notes != 'true' }}
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true
+          files: |
+            dist/local-ai-chat.exe
+            dist/local-ai-chat.exe.sha256

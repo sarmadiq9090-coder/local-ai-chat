@@ -14,6 +14,8 @@ pub struct Paths {
     pub data_dir: PathBuf,
     /// `%APPDATA%\LocalAiChat\conversations`
     pub conversations_dir: PathBuf,
+    /// `%APPDATA%\LocalAiChat\assistants`
+    pub assistants_dir: PathBuf,
     /// `%APPDATA%\LocalAiChat\settings.json`
     pub settings_file: PathBuf,
     /// `%LOCALAPPDATA%\LocalAiChat\webview` (WebView2 cache/profile)
@@ -29,12 +31,14 @@ impl Paths {
         let docs = dirs::document_dir().unwrap_or_else(|| data_dir.clone());
         let paths = Self {
             conversations_dir: data_dir.join("conversations"),
+            assistants_dir: data_dir.join("assistants"),
             settings_file: data_dir.join("settings.json"),
             webview_dir: local_dir.join("webview"),
             export_dir: docs.join(APP_DIR),
             data_dir,
         };
         std::fs::create_dir_all(&paths.conversations_dir)?;
+        std::fs::create_dir_all(&paths.assistants_dir)?;
         std::fs::create_dir_all(&paths.webview_dir)?;
         Ok(paths)
     }

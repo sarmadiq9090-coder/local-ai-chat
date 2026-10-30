@@ -3,6 +3,13 @@ name = "local-ai-chat"
 version = "2.0.0"
 description = "Windows desktop chat client for local AI models (Ollama)"
 edition = "2024"
+license = "MIT"
+authors = ["Sarmad <https://github.com/sarmadiq9090-coder>"]
+repository = "https://github.com/sarmadiq9090-coder/local-ai-chat"
+homepage = "https://github.com/sarmadiq9090-coder/local-ai-chat"
+readme = "README.md"
+keywords = ["ollama", "llm", "chat", "arabic", "webview2"]
+categories = ["gui"]
 
 [dependencies]
 anyhow = "1.0.104"
@@ -10,6 +17,7 @@ axum = "0.8.9"
 dirs = "7.0.0"
 futures-util = "0.3.34"
 mime_guess = "2.0.5"
+pdf-extract = "0.12.1"
 reqwest = { version = "0.13.5", default-features = false, features = ["stream", "json"] }
 rust-embed = "8.13.0"
 serde = { version = "1.0.229", features = ["derive"] }
@@ -24,7 +32,6 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
-panic = "abort"
 
 [target."cfg(windows)".dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }

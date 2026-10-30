@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: "Security vulnerability / ثغرة أمنية"
+    url: https://github.com/sarmadiq9090-coder/local-ai-chat/security/advisories/new
+    about: "Please report security issues privately. / أبلغ عن الثغرات الأمنية بشكل خاص."
