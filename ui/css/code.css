@@ -1,0 +1,47 @@
+/* code.css — code block toolbar buttons + syntax highlighting colors
+   (classes produced by the bundled highlight.js, ui/vendor/highlight.min.js). */
+
+:root {
+  --hl-keyword: #c792ea;
+  --hl-string: #c3e88d;
+  --hl-number: #f78c6c;
+  --hl-comment: #7f8c8d;
+  --hl-function: #82aaff;
+  --hl-type: #ffcb6b;
+  --hl-attr: #f07178;
+  --hl-tag: #89ddff;
+  --hl-meta: #89ddff;
+}
+[data-theme="light"] {
+  --hl-keyword: #8b2fc9;
+  --hl-string: #2e7d32;
+  --hl-number: #c2410c;
+  --hl-comment: #8a8a8a;
+  --hl-function: #1d4ed8;
+  --hl-type: #a16207;
+  --hl-attr: #b91c1c;
+  --hl-tag: #0e7490;
+  --hl-meta: #0e7490;
+}
+
+.code-actions { display: inline-flex; gap: 4px; }
+.code-btn {
+  display: inline-flex; align-items: center; gap: 5px; border: 0; background: none;
+  color: var(--muted); font-size: 12px; padding: 2px 6px; border-radius: 6px; cursor: pointer;
+}
+.code-btn:hover { color: var(--text); background: var(--hover); }
+.code-btn.done { color: var(--ok); }
+.run-code { color: var(--accent); }
+.run-code:hover { color: var(--accent-hover); }
+
+.hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-literal { color: var(--hl-keyword); }
+.hljs-string, .hljs-regexp, .hljs-addition, .hljs-template-variable { color: var(--hl-string); }
+.hljs-number, .hljs-symbol, .hljs-bullet { color: var(--hl-number); }
+.hljs-comment, .hljs-quote, .hljs-deletion { color: var(--hl-comment); font-style: italic; }
+.hljs-title, .hljs-title.function_, .hljs-section { color: var(--hl-function); }
+.hljs-type, .hljs-title.class_, .hljs-class .hljs-title, .hljs-variable.language_ { color: var(--hl-type); }
+.hljs-attr, .hljs-attribute, .hljs-property, .hljs-selector-class, .hljs-selector-id { color: var(--hl-attr); }
+.hljs-name, .hljs-tag { color: var(--hl-tag); }
+.hljs-meta, .hljs-doctag, .hljs-link { color: var(--hl-meta); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: bold; }

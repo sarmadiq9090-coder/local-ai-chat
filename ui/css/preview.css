@@ -1,0 +1,53 @@
+/* preview.css — live preview panel (see js/preview.js). The panel is the last
+   flex child of <body>, so it sits at the inline-end (left side in RTL). */
+
+#preview {
+  width: 46vw; min-width: 320px; flex-shrink: 0;
+  display: flex; flex-direction: column; position: relative;
+  background: var(--side); border-inline-start: 1px solid var(--line);
+}
+#preview[hidden] { display: none; }
+#preview.max { position: fixed; inset: 0; width: auto !important; z-index: 20; }
+
+.preview-resize {
+  position: absolute; inset-block: 0; inset-inline-start: -4px; width: 8px;
+  cursor: col-resize; z-index: 2;
+}
+.preview-resize:hover, body.resizing .preview-resize { background: var(--accent); opacity: .35; }
+body.resizing { user-select: none; cursor: col-resize; }
+body.resizing .preview-frame { pointer-events: none; } /* keep pointer events while dragging over the iframe */
+
+.preview-head {
+  display: flex; align-items: center; gap: 6px; padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.preview-title { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--accent); }
+.preview-lang { font-size: 12px; color: var(--muted); background: var(--panel); padding: 2px 8px; border-radius: 999px; }
+.preview-lang:empty { display: none; }
+#preview .spacer { flex: 1; }
+
+.preview-frame { flex: 1; width: 100%; border: 0; background: #fff; min-height: 0; }
+
+.preview-errors {
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  background: color-mix(in srgb, var(--danger) 14%, var(--side)); color: var(--danger);
+  border-top: 1px solid var(--line); font-size: 14px;
+}
+.preview-errors[hidden] { display: none; }
+.btn.small { padding: 5px 10px; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
+
+.preview-drawer { border-top: 1px solid var(--line); font-size: 13px; }
+.preview-drawer summary { padding: 6px 12px; cursor: pointer; color: var(--muted); user-select: none; }
+.preview-console {
+  margin: 0; max-height: 160px; overflow: auto; padding: 6px 12px 10px;
+  font-family: var(--mono); font-size: 12.5px; white-space: pre-wrap; text-align: left;
+}
+.preview-console:empty::before { content: "—"; color: var(--muted); }
+.preview-console .log { padding: 2px 0; border-bottom: 1px solid var(--line); unicode-bidi: plaintext; }
+.preview-console .warn { color: #d6a531; }
+.preview-console .error { color: var(--danger); }
+
+@media (max-width: 800px) {
+  #preview { position: fixed; inset: 0; width: auto !important; z-index: 20; }
+  .preview-resize { display: none; }
+}

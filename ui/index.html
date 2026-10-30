@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="ar" dir="rtl" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title data-i18n="appTitle">الذكاء المحلي</title>
+<link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/code.css">
+<link rel="stylesheet" href="css/preview.css">
+<script src="vendor/highlight.min.js"></script>
+<script type="module" src="js/main.js"></script>
+</head>
+<body>
+
+<aside id="side" aria-label="المحادثات">
+  <div class="side-head">
+    <button id="sideToggle" class="icon-btn" type="button" data-i18n-title="toggleSidebar"><span data-icon="sidebar" data-size="20"></span></button>
+    <span class="brand" data-i18n="appTitle"></span>
+    <button id="newChat" class="icon-btn" type="button" data-i18n-title="newChat"><span data-icon="compose" data-size="20"></span></button>
+  </div>
+  <div class="search">
+    <span data-icon="search" data-size="16"></span>
+    <input id="search" type="search" dir="auto" autocomplete="off" data-i18n-placeholder="searchPlaceholder">
+  </div>
+  <nav id="convs"></nav>
+  <div class="side-foot">
+    <button id="openModels" class="side-btn" type="button"><span data-icon="cube"></span><span data-i18n="models"></span></button>
+    <button id="openSettings" class="side-btn" type="button"><span data-icon="settings"></span><span data-i18n="settings"></span></button>
+  </div>
+</aside>
+<div id="backdrop"></div>
+
+<main id="main" class="is-empty">
+  <div id="banner" class="banner" hidden>
+    <span data-icon="alert"></span>
+    <span data-i18n="ollamaDownBanner"></span>
+    <button id="startOllama" class="btn primary" type="button" data-i18n="startOllama"></button>
+  </div>
+
+  <header id="top">
+    <div class="top-start">
+      <button id="sideToggleTop" class="icon-btn when-collapsed" type="button" data-i18n-title="toggleSidebar"><span data-icon="sidebar" data-size="20"></span></button>
+      <button id="newChatTop" class="icon-btn when-collapsed" type="button" data-i18n-title="newChat"><span data-icon="compose" data-size="20"></span></button>
+      <div id="modelMenu" class="model-menu">
+        <button id="modelBtn" class="model-btn" type="button" aria-haspopup="menu" aria-expanded="false" data-i18n-title="modelPicker">
+          <span id="modelName" dir="ltr"></span><span data-icon="chevronDown" data-size="16"></span>
+        </button>
+        <div id="modelList" class="dropdown" role="menu" hidden></div>
+      </div>
+      <label id="thinkLbl" class="think-toggle">
+        <input id="think" type="checkbox">
+        <span data-icon="bulb" data-size="16"></span>
+        <span data-i18n="deepThinking"></span>
+      </label>
+    </div>
+    <div id="convTitle" class="conv-title-top" dir="auto"></div>
+    <div class="top-end">
+      <span id="status"></span>
+      <button id="exportBtn" class="icon-btn" type="button" data-i18n-title="export"><span data-icon="exportFile"></span></button>
+    </div>
+  </header>
+
+  <div id="stage">
+    <div id="msgs"><div id="list" class="wrap"></div></div>
+
+    <div id="greeting">
+      <h2 data-i18n="greeting"></h2>
+      <p data-i18n="greetingSub"></p>
+    </div>
+
+    <footer id="composer">
+      <button id="toBottom" class="to-bottom" type="button" data-i18n-title="scrollToBottom"><span data-icon="arrowDown"></span></button>
+      <div id="editBar" class="edit-bar" hidden>
+        <span data-icon="edit" data-size="15"></span>
+        <span data-i18n="editing"></span>
+        <button id="cancelEdit" class="link-btn" type="button" data-i18n="cancel"></button>
+      </div>
+      <div id="box" class="box">
+        <div id="chips" class="chips" hidden></div>
+        <textarea id="input" rows="1" dir="auto" data-i18n-placeholder="inputPlaceholder"></textarea>
+        <div class="box-row">
+          <button id="attachBtn" class="icon-btn round" type="button" data-i18n-title="attach"><span data-icon="plus" data-size="20"></span></button>
+          <input id="fileInput" type="file" multiple hidden>
+          <span class="spacer"></span>
+          <button id="send" class="send-btn" type="button"></button>
+        </div>
+        <div class="drop-hint" data-i18n="dropHere"></div>
+      </div>
+      <div class="hint" data-i18n="hint"></div>
+    </footer>
+
+    <div id="examples" class="examples"></div>
+  </div>
+</main>
+
+<div id="toasts"></div>
+</body>
+</html>
