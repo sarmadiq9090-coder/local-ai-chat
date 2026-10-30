@@ -90,7 +90,7 @@ so the UI can add new fields without backend changes.
 ## Custom assistants (RAG) — `/api/app/assistants/...`
 
 Implemented in `src/server/routes/assistants.rs` on top of `src/assistants/` (spec: `docs/specs/assistants.md`).
-Stored under `%APPDATA%\LocalAiChat\assistants\{id}\` (`assistant.json`, `docs/{doc_id}.txt`, `index.json`).
+Stored under `%APPDATA%\LocalAiChat\assistants\{id}\` (`assistant.json`, `docs/{doc_id}.txt`, `docs/{doc_id}.digest.md`, `index.json`).
 Errors: unknown assistant/document → **404**; invalid id / empty name / bad upload → **400**;
 embedding model not installed in Ollama → **424** `{ "error": string, "missing_model": string }`
 (`/docs` and `/reindex` check this via Ollama's `/api/tags` *before* streaming; if Ollama can't be
@@ -109,18 +109,23 @@ with `{ error: "document too large: …" | "knowledge base too large: …", name
 | GET | `/api/app/assistants/{id}` | – | `Assistant & { index: IndexStatus }` |
 | PUT | `/api/app/assistants/{id}` | `AssistantPatch` (only present fields change; `model: null` clears it) | `Assistant`. Changing `embed_model` makes the index stale → call `/reindex` |
 | DELETE | `/api/app/assistants/{id}` | – | `{ "ok": true }` — removes all its documents and index (missing is fine) |
-| POST | `/api/app/assistants/{id}/docs` | `multipart/form-data` with one or more file fields **or** JSON `{ name, text }` (a note) | NDJSON stream (see below); per document a final `{ doc: DocMeta }` or `{ error, name, missing_model? }` |
-| GET | `/api/app/assistants/{id}/docs/{doc_id}` | – | `{ text: string }` — extracted plain text (e.g. to edit a note) |
+| POST | `/api/app/assistants/{id}/docs` | `multipart/form-data` with one or more file fields **or** JSON `{ name, text }` (a note). Query `model=` (optional): chat model for digests when the assistant has none | NDJSON stream (see below); per document a final `{ doc: DocMeta, digest_error?: string }` or `{ error, name, missing_model? }`. For a deep-mode assistant each document is digested after indexing (`digesting` progress); a failed digest only adds `digest_error`. Closing the stream stops after the current step |
+| GET | `/api/app/assistants/{id}/docs/{doc_id}` | – | `{ text, offset, total_chars, chunks, digest_chunks, pages: number \| null, warning: string \| null }` — extracted plain text (e.g. to edit a note). Query `offset=` / `limit=` (characters) return one page of a large document |
 | DELETE | `/api/app/assistants/{id}/docs/{doc_id}` | – | `{ "ok": true }` (its chunks are removed) |
 | POST | `/api/app/assistants/{id}/reindex` | – | NDJSON stream; final `{ assistant: Assistant }` or `{ error, missing_model? }` |
-| POST | `/api/app/assistants/{id}/search` | `{ query: string, k?: number }` (k default 5, max 50) | `{ results: SearchResult[] }`, best first — `[]` when nothing passes the score threshold (0.42) or is within 0.15 of the best score; **409** `reindex_required` on a stale index |
+| POST | `/api/app/assistants/{id}/search` | `{ query: string, k?: number }` (k default 5, max 50) | `{ results: SearchResult[] }`, best first — `[]` when nothing passes the score threshold (0.42) or is within 0.15 of the best score; **409** `reindex_required` on a stale index. Digest chunks are never returned |
+| GET | `/api/app/assistants/templates` | – | `InstructionTemplate[]` (legal, tutor, support, research, hr, techdocs) |
+| POST | `/api/app/assistants/{id}/context` | `ContextRequest` | `ContextResult` — retrieval for one chat turn (deep mode: query rewriting, digests, neighbour expansion, token budget; otherwise `/search`-like with k 5). **409** `reindex_required` on a stale index |
+| POST | `/api/app/assistants/{id}/digest` | `{ doc_id?: string, force?: boolean, model?: string }` (default: every document without a good digest; `force` regenerates; `model` = chat model when the assistant has none) | NDJSON: `{ status: "digesting" \| "embedding" \| "saving", done, total }` lines, per document `{ doc: DocMeta }` or `{ error, name }`, final `{ assistant }`. 400 if no chat model can be chosen. Closing the stream cancels (the digest is then marked failed) |
+| GET | `/api/app/assistants/{id}/docs/{doc_id}/digest` | – | `{ text: string, digest: DigestMeta \| null }`; 404 when the document has no digest |
+| PUT | `/api/app/assistants/{id}/docs/{doc_id}/digest` | `{ text: string }` | `{ doc: DocMeta }` — saves an edited digest (`status: "edited"`) and re-embeds its chunks; empty text removes the digest |
 
 File uploads accept `txt md csv json xml yml yaml toml html css js ts py rs go java c cpp h cs php rb sh ps1 sql ini log pdf`.
 Unsupported files in a multi-file upload are skipped with an `{ error: "unsupported file type: …", name }`
 line while the others are indexed; if no file is supported → 400 before streaming. Files in one upload
 are indexed one after another.
 
-NDJSON progress lines: `{ "status": "extracting" | "embedding" | "saving", "done": number, "total": number }`.
+NDJSON progress lines: `{ "status": "extracting" | "embedding" | "digesting" | "saving", "done": number, "total": number }`.
 Final lines carry no `status`. HTTP status is 200 once streaming starts; failures arrive as `{error}` lines.
 
 ```ts
@@ -129,23 +134,57 @@ type Assistant = {
   instructions: string;
   model: string | null;      // preferred chat model; null = the app's current model
   strict: boolean;           // default true: answer only from the knowledge
-  embed_model: string;       // default "bge-m3"
+  embed_model: string;       // default "bge-m3" ("x" and "x:latest" are the same model)
+  deep: boolean;             // deep understanding (v2.2); new assistants: true, older files: false
+  num_ctx?: number;          // answer context length 2048..131072; absent = auto (16384 in deep mode, else the app setting)
+  think?: boolean;           // thinking for answers; absent = auto (on in deep mode, else the app setting)
   created_at: number; updated_at: number; // unix ms
   docs: DocMeta[];
 };
 type DocMeta = { id: string; name: string; kind: "file" | "note"; size: number /* bytes */; chunks: number; added_at: number;
-                 warning?: "arabic_pdf_quality" /* Arabic PDF text had to be repaired and may be inaccurate */ };
+                 warning?: "arabic_pdf_quality" /* Arabic PDF text had to be repaired and may be inaccurate */
+                         | "scanned_pdf"        /* < 80 chars of text per page: probably scanned, needs OCR */;
+                 pages?: number; chars?: number;  // PDFs / documents indexed since v2.2
+                 digest?: DigestMeta };
+type DigestMeta = { status: "ok" | "edited" | "failed"; model: string; chars: number; chunks: number /* digest chunks in the index */;
+                    created_at: number; millis?: number /* generation time */; error?: string /* status "failed" */ };
 type NewAssistant = { name: string; icon?: string; description?: string; instructions?: string;
-                      model?: string; strict?: boolean; embed_model?: string };
-type AssistantPatch = Partial<Omit<NewAssistant, "model">> & { model?: string | null };
-type IndexStatus = { embed_model: string; dim: number; chunks: number;
-                     stale: boolean /* re-index needed: other embed model or older chunker (index.json "version" < 2) */ };
+                      model?: string; strict?: boolean; embed_model?: string;
+                      deep?: boolean /* default true */; num_ctx?: number; think?: boolean };
+type AssistantPatch = Partial<Omit<NewAssistant, "model" | "num_ctx" | "think">> &
+                      { model?: string | null; num_ctx?: number | null; think?: boolean | null }; // null = automatic
+type IndexStatus = { embed_model: string; dim: number; chunks: number; digest_chunks: number;
+                     stale: boolean /* re-index needed: other embed model, older chunker (index.json "version" < 2) or chunk counts that don't match */ };
 type SearchResult = { doc_id: string; doc_name: string; text: string; score: number };
+type InstructionTemplate = { id: string; icon: string; name: { ar: string; en: string };
+                             description: { ar: string; en: string }; instructions: { ar: string; en: string } };
+type ContextRequest = {
+  messages: { role: "user" | "assistant"; content: string }[]; // the conversation, ending with the question
+  model?: string;            // chat model that will answer (used to rewrite the query)
+  k?: number;                // max hits (deep default 10, else 5; max 50)
+  rewrite?: boolean;         // false = never rewrite
+};
+type ContextResult = {
+  query: string;             // the last user message
+  rewritten: string | null;  // standalone query written by the model
+  rewrite: "skipped" | "done" | "cached" | "failed";
+  queries: string[];         // what was searched
+  deep: boolean;
+  num_ctx: number;           // effective options.num_ctx for the answer
+  think: boolean;            // effective thinking switch (apply only if the model supports thinking)
+  budget_tokens: number;     // knowledge budget (deep mode; 0 otherwise)
+  used_tokens: number;
+  passages: Passage[];       // in prompt order; [] → strict "not in knowledge"
+  timings: { rewrite_ms: number; search_ms: number; total_ms: number };
+};
+type Passage = { doc_id: string; doc_name: string; kind: "passage" | "digest"; text: string; score: number;
+                 chunks: number[] /* merged chunk positions */; hits: number[] /* which were search hits */;
+                 expanded: boolean /* has neighbour chunks */; full_digest: boolean; tokens: number };
 ```
 
 Conversation/message fields used by assistants (stored as unknown extra fields):
 `Conversation.assistant_id?: string` (the chat belongs to an assistant) and
-`Message.sources?: { n: number; doc_name: string; snippet: string; score: number }[]` (assistant replies:
+`Message.sources?: { n: number; doc_name: string; snippet: string; score: number; kind?: "digest" }[]` (assistant replies:
 the numbered passages given to the model, `n` matches the `[n]` citations).
 
 ## Auto-update — `/api/app/update/...`

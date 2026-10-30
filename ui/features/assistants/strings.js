@@ -107,6 +107,92 @@ export default {
       "- اعتمد على المصادر أدناه أولًا، واذكر رقم المصدر بين قوسين مربعين مثل [1].\n" +
       "- إذا لم تكن الإجابة في المصادر فيمكنك الإجابة من معرفتك العامة، مع التنبيه إلى أنها ليست من المعرفة المعطاة.\n" +
       "- أجب بلغة سؤال المستخدم.",
+    // ---- deep understanding (v2.2) ----
+    asst_corrupt_one: "تعذّرت قراءة ملف مساعد واحد؛ حُفظت نسخة منه باسم assistant.json.corrupt-… وأُخفي من القائمة.",
+    asst_corrupt_two: "تعذّرت قراءة ملفّي مساعدَين؛ حُفظت نسخة منهما باسم assistant.json.corrupt-… وأُخفيا من القائمة.",
+    asst_corrupt_other: "تعذّرت قراءة {n} من ملفات المساعدين؛ حُفظت نسخة منها باسم assistant.json.corrupt-… وأُخفيت من القائمة.",
+    asst_deep: "فهم عميق",
+    asst_deepHelp: "يقرأ الموديل كل مستند ويكتب له ملخصًا منظمًا، ويعيد صياغة أسئلة المتابعة، ويعطي الموديل المقاطع مع ما حولها وسياقًا أطول. أدق في الأسئلة الشاملة والمقارنات، لكن الفهرسة أبطأ.",
+    asst_advanced: "إعدادات متقدمة",
+    asst_numCtx: "طول السياق (num_ctx)",
+    asst_numCtxAuto: "تلقائي ({n})",
+    asst_numCtxWarn: "سياق أكبر من {n} قد لا يتسع في ذاكرة كرت شاشة 8 GB مع موديل 8B، فيعمل جزء منه على المعالج ويصبح أبطأ.",
+    asst_think: "التفكير قبل الإجابة",
+    asst_thinkAuto: "تلقائي (مفعّل في الفهم العميق)",
+    asst_thinkOn: "مفعّل",
+    asst_thinkOff: "متوقف",
+    asst_template: "قالب التعليمات",
+    asst_templateNone: "اختر قالبًا…",
+    asst_templateReplace: "استبدال التعليمات الحالية بقالب «{name}»؟",
+    asst_status_digesting: "فهم المستند وكتابة ملخصه…",
+    asst_cancel: "إلغاء",
+    asst_cancelled: "أُلغيت العملية",
+    asst_digestOk: "ملخص ✓",
+    asst_digestEdited: "ملخص (معدّل)",
+    asst_digestNone: "بلا ملخص",
+    asst_digestFailed: "فشل الملخص",
+    asst_digestFailedMsg: "تمت فهرسة «{name}» لكن تعذّر كتابة ملخصه: {error}",
+    asst_digestMissingN_one: "مستند واحد بلا ملخص",
+    asst_digestMissingN_two: "مستندان بلا ملخص",
+    asst_digestMissingN_few: "{n} مستندات بلا ملخص",
+    asst_digestMissingN_many: "{n} مستندًا بلا ملخص",
+    asst_digestMissingN_other: "{n} مستند بلا ملخص",
+    asst_digestAll: "اكتب الملخصات",
+    asst_digestsDone: "اكتملت الملخصات",
+    asst_digestNoModel: "اختر موديلًا للمساعد (أو للتطبيق) أولًا لكتابة الملخصات.",
+    asst_viewDoc: "ماذا قرأ؟ (النص والملخص)",
+    asst_docText: "النص المستخرج",
+    asst_docDigest: "الملخص",
+    asst_docStats: "{pages} · {chars} حرف · {chunks}",
+    asst_pages_one: "صفحة واحدة",
+    asst_pages_two: "صفحتان",
+    asst_pages_few: "{n} صفحات",
+    asst_pages_many: "{n} صفحة",
+    asst_pages_other: "{n} صفحة",
+    asst_noPages: "—",
+    asst_digestChunks: "مقاطع الملخص: {n}",
+    asst_prevPage: "السابق",
+    asst_nextPage: "التالي",
+    asst_pageOf: "{from}–{to} من {total} حرف",
+    asst_digestEmpty: "لا يوجد ملخص لهذا المستند بعد.",
+    asst_digestGenerate: "اكتب الملخص",
+    asst_digestRegenerate: "أعد كتابة الملخص",
+    asst_digestSave: "حفظ الملخص",
+    asst_digestSaved: "تم حفظ الملخص",
+    asst_digestInfo: "كتبه {model} · {chars} حرف",
+    asst_warn_scanned_pdf: "يبدو أن هذا PDF ممسوح ضوئيًا (صور بلا نص تقريبًا)؛ ارفع نسخة عليها نص (OCR) أو ملف ‎.txt.",
+    asst_test: "تجربة المساعد",
+    asst_testHelp: "اسأل سؤالًا لترى ما الذي يسترجعه المساعد وكيف يجيب، دون حفظ محادثة. تُستخدم الإعدادات المحفوظة.",
+    asst_testPh: "اكتب سؤالًا للتجربة…",
+    asst_testAsk: "اسأل",
+    asst_testClear: "مسح",
+    asst_testQuery: "سؤال البحث",
+    asst_testRewritten: "بعد إعادة الصياغة",
+    asst_testNoRewrite: "لم تلزم إعادة صياغة",
+    asst_testRewriteFailed: "تعذّرت إعادة الصياغة (استُخدم السؤال السابق مع الحالي)",
+    asst_testPassages: "المقاطع المسترجعة",
+    asst_testNoPassages: "لا توجد مقاطع مطابقة — في الوضع الصارم سيجيب بأن المعلومة غير موجودة.",
+    asst_testAnswer: "الإجابة",
+    asst_testBudget: "{used} / {budget} توكن · num_ctx {ctx}",
+    asst_testTimes: "إعادة الصياغة {rw} ث · البحث {s} ث · الإجابة {a} ث",
+    asst_kindDigest: "ملخص",
+    asst_kindExpanded: "+ سياق",
+    asst_srcDigest: "ملخص المستند",
+    asst_deepEnableAsk: "فعّلت الفهم العميق. أكتب الآن ملخصات المستندات الحالية ({n})؟ قد يستغرق ذلك دقائق.",
+    asst_deepStrictRules:
+      "- اقرأ كل المصادر أدناه بعناية قبل الإجابة، واجمع من جميعها ما يتعلق بالسؤال ووفّق بينها؛ إذا تعارضت فاذكر ذلك.\n" +
+      "- أجب فقط من المصادر، ولا تستخدم أي معرفة خارجية أبدًا ولا تخمّن.\n" +
+      "- أجب إجابة كاملة ودقيقة: اذكر كل الشروط والاستثناءات والقيم المتعلقة بالسؤال، وانقل الأرقام والمبالغ والتواريخ والأسماء وأرقام المواد حرفيًا كما وردت (لا تترجم الأسماء ولا تغيّر كتابتها).\n" +
+      "- اذكر رقم المصدر بين قوسين مربعين بعد كل معلومة، مثل [1].\n" +
+      "- «ملخص المستند» للفهم العام؛ عند التفاصيل اعتمد على نصوص المستند نفسها إن وُجدت.\n" +
+      "- إذا غطّت المصادر جزءًا من السؤال فقط، فأجب عن هذا الجزء وقل بوضوح ما الذي لا تذكره المصادر.\n" +
+      "- إذا لم تكن الإجابة موجودة في المصادر إطلاقًا (حتى لو كنت تعرفها من مكان آخر)، فأجب بهذه الجملة حرفيًا ولا شيء غيرها:\n{sentence}\n" +
+      "- أجب بلغة سؤال المستخدم.",
+    asst_deepSoftRules:
+      "- اقرأ كل المصادر أدناه بعناية، واجمع من جميعها ما يتعلق بالسؤال ووفّق بينها، واذكر رقم المصدر بين قوسين مربعين مثل [1].\n" +
+      "- أجب إجابة كاملة ودقيقة، وانقل الأرقام والتواريخ والأسماء حرفيًا كما وردت.\n" +
+      "- إذا لم تكن الإجابة في المصادر فيمكنك الإجابة من معرفتك العامة، مع التنبيه إلى أنها ليست من المعرفة المعطاة.\n" +
+      "- أجب بلغة سؤال المستخدم.",
   },
   en: {
     asst_section: "Assistants",
@@ -207,6 +293,85 @@ export default {
       "- Rely on the sources below first and cite the source number in square brackets, like [1].\n" +
       "- If the answer isn't in the sources you may answer from general knowledge, but say it isn't from the given knowledge.\n" +
       "- Reply in the language of the user's question.",
+    // ---- deep understanding (v2.2) ----
+    asst_corrupt_one: "1 assistant file couldn't be read; a copy was kept as assistant.json.corrupt-… and it was hidden from the list.",
+    asst_corrupt_other: "{n} assistant files couldn't be read; a copy was kept as assistant.json.corrupt-… and they were hidden from the list.",
+    asst_deep: "Deep understanding",
+    asst_deepHelp: "The model reads every document and writes a structured digest, rewrites follow-up questions, and gets matching passages with their surroundings and a longer context. Better for broad questions and comparisons; indexing is slower.",
+    asst_advanced: "Advanced",
+    asst_numCtx: "Context length (num_ctx)",
+    asst_numCtxAuto: "Automatic ({n})",
+    asst_numCtxWarn: "A context above {n} may not fit in 8 GB of VRAM with an 8B model; part of it then runs on the CPU and is slower.",
+    asst_think: "Think before answering",
+    asst_thinkAuto: "Automatic (on in deep understanding)",
+    asst_thinkOn: "On",
+    asst_thinkOff: "Off",
+    asst_template: "Instruction template",
+    asst_templateNone: "Choose a template…",
+    asst_templateReplace: "Replace the current instructions with the “{name}” template?",
+    asst_status_digesting: "Understanding the document and writing its digest…",
+    asst_cancel: "Cancel",
+    asst_cancelled: "Cancelled",
+    asst_digestOk: "Digest ✓",
+    asst_digestEdited: "Digest (edited)",
+    asst_digestNone: "No digest",
+    asst_digestFailed: "Digest failed",
+    asst_digestFailedMsg: "“{name}” was indexed but its digest couldn't be written: {error}",
+    asst_digestMissingN_one: "1 document without a digest",
+    asst_digestMissingN_other: "{n} documents without a digest",
+    asst_digestAll: "Write digests",
+    asst_digestsDone: "Digests are ready",
+    asst_digestNoModel: "Choose a model for the assistant (or the app) first to write digests.",
+    asst_viewDoc: "What did it read? (text and digest)",
+    asst_docText: "Extracted text",
+    asst_docDigest: "Digest",
+    asst_docStats: "{pages} · {chars} chars · {chunks}",
+    asst_pages_one: "1 page",
+    asst_pages_other: "{n} pages",
+    asst_noPages: "—",
+    asst_digestChunks: "Digest chunks: {n}",
+    asst_prevPage: "Previous",
+    asst_nextPage: "Next",
+    asst_pageOf: "{from}–{to} of {total} chars",
+    asst_digestEmpty: "This document has no digest yet.",
+    asst_digestGenerate: "Write the digest",
+    asst_digestRegenerate: "Rewrite the digest",
+    asst_digestSave: "Save digest",
+    asst_digestSaved: "Digest saved",
+    asst_digestInfo: "Written by {model} · {chars} chars",
+    asst_warn_scanned_pdf: "This PDF looks scanned (images with almost no text); upload a copy with OCR text or a .txt file.",
+    asst_test: "Test the assistant",
+    asst_testHelp: "Ask a question to see what the assistant retrieves and how it answers, without saving a conversation. Uses the saved settings.",
+    asst_testPh: "Type a test question…",
+    asst_testAsk: "Ask",
+    asst_testClear: "Clear",
+    asst_testQuery: "Search query",
+    asst_testRewritten: "Rewritten",
+    asst_testNoRewrite: "No rewrite needed",
+    asst_testRewriteFailed: "Rewrite failed (the previous question was added instead)",
+    asst_testPassages: "Retrieved passages",
+    asst_testNoPassages: "No matching passages — in strict mode it will say the information isn't there.",
+    asst_testAnswer: "Answer",
+    asst_testBudget: "{used} / {budget} tokens · num_ctx {ctx}",
+    asst_testTimes: "rewrite {rw} s · search {s} s · answer {a} s",
+    asst_kindDigest: "digest",
+    asst_kindExpanded: "+ context",
+    asst_srcDigest: "document digest",
+    asst_deepEnableAsk: "Deep understanding is on. Write digests for the existing documents now ({n})? This can take a few minutes.",
+    asst_deepStrictRules:
+      "- Read ALL the sources below carefully before answering; combine everything relevant from all of them and reconcile them; if they conflict, say so.\n" +
+      "- Answer ONLY from the sources. Never use outside knowledge and never guess.\n" +
+      "- Answer completely and precisely: include every condition, exception and value that applies, and copy numbers, amounts, dates, names and article numbers exactly as written (do not translate or re-spell names).\n" +
+      "- Cite the source number in square brackets after each fact, like [1].\n" +
+      "- A “document digest” is for orientation; for details rely on the document's own passages when present.\n" +
+      "- If the sources cover only part of the question, answer that part and say clearly what the sources don't cover.\n" +
+      "- If the sources don't contain the answer at all (even if you know it from elsewhere), reply with exactly this sentence and nothing else:\n{sentence}\n" +
+      "- Reply in the language of the user's question.",
+    asst_deepSoftRules:
+      "- Read all the sources below carefully, combine and reconcile what is relevant, and cite the source number in square brackets, like [1].\n" +
+      "- Answer completely and precisely, copying numbers, dates and names exactly as written.\n" +
+      "- If the answer isn't in the sources you may answer from general knowledge, but say it isn't from the given knowledge.\n" +
+      "- Reply in the language of the user's question.",
   },
 };
 
@@ -214,4 +379,10 @@ export default {
 export const NOT_IN_KNOWLEDGE = {
   ar: "لا توجد هذه المعلومة في المعرفة التي أُعطيت لي.",
   en: "That information isn't in the knowledge I was given.",
+};
+
+/** Per-turn reply-language rule, in the language of the last question (not the chat history). */
+export const REPLY_LANGUAGE = {
+  ar: "مهم: السؤال الأخير بالعربية، فاكتب ردّك بالعربية فقط مهما كانت لغة المصادر أو الرسائل السابقة.",
+  en: "Important: the last question is in English, so write your reply in English only, whatever the language of the sources or earlier messages.",
 };

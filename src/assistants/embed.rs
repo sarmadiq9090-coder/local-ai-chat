@@ -82,6 +82,20 @@ pub async fn embed(
     Ok(out)
 }
 
+/// [`embed`] in batches of [`BATCH_SIZE`].
+pub async fn embed_batched(
+    http: &reqwest::Client,
+    base_url: &str,
+    model: &str,
+    inputs: &[String],
+) -> anyhow::Result<Vec<Vec<f32>>> {
+    let mut out = Vec::with_capacity(inputs.len());
+    for batch in inputs.chunks(BATCH_SIZE) {
+        out.extend(embed(http, base_url, model, batch).await?);
+    }
+    Ok(out)
+}
+
 /// Whether `model` is installed in Ollama (`GET /api/tags`; `"bge-m3"` also
 /// matches `"bge-m3:latest"`). `None` if Ollama can't be asked (unreachable,
 /// unexpected answer).

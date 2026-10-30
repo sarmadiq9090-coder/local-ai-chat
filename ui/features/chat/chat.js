@@ -465,6 +465,9 @@ async function generate(conv) {
         payload.think = supportsThinking(rag.model) ? !!s.think : undefined;
       }
       if (rag.sources.length) ai.sources = rag.sources;
+      // assistants (deep understanding): per-assistant context length and thinking switch
+      if (rag.num_ctx) payload.options.num_ctx = rag.num_ctx;
+      if (typeof rag.think === "boolean" && supportsThinking(payload.model)) payload.think = rag.think;
     }
     for await (const chunk of api.chatStream(payload, controller.signal)) {
       if (chunk.message) {

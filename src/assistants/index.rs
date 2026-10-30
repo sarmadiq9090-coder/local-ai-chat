@@ -147,6 +147,7 @@ mod tests {
         IndexedChunk {
             doc_id: "d".into(),
             i: 0,
+            kind: None,
             text: text.into(),
             vec,
         }

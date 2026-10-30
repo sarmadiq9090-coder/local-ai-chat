@@ -8,8 +8,13 @@
 //   prepareAssistantTurn() before generating and sourcesEl() to render `sources` under replies.
 //   A chip in the top bar shows the active assistant (and its model); the empty state of an
 //   assistant chat shows its description and suggested questions (rendered into #examples).
-// Cross-feature deps: sidebar (closeMobileSidebar), models (loadModels, toGB, modelInstalled, loadCaps),
-//   chat (send: suggested questions).
+// - Deep understanding (v2.2, per-assistant `deep`): /context does query rewriting, digests,
+//   neighbour expansion and the token budget; prepareAssistantTurn then also returns `num_ctx`
+//   and `think` for chat.js. The editor has the deep toggle + advanced options, instruction
+//   templates, a per-document "what did it read?" dialog (extracted text, digest view/edit/
+//   regenerate) and a test panel (retrieval + answer without saving a conversation).
+// Cross-feature deps: sidebar (closeMobileSidebar), models (loadModels, toGB, modelInstalled, loadCaps,
+//   supportsThinking), chat (send: suggested questions).
 // Events: listens to "current", "models", "language"; emits "current", "focus-composer", "assistants".
 
 import { state, on, emit } from "../../core/state.js";
@@ -18,9 +23,9 @@ import { $, el, iconButton, toast, openModal, confirmDialog } from "../../core/d
 import { icon } from "../../core/icons.js";
 import { t, registerStrings, getLanguage } from "../../core/i18n.js";
 import { closeMobileSidebar } from "../sidebar/sidebar.js";
-import { loadModels, toGB, modelInstalled, loadCaps } from "../models/models.js";
+import { loadModels, toGB, modelInstalled, loadCaps, supportsThinking } from "../models/models.js";
 import { send } from "../chat/chat.js";
-import strings, { NOT_IN_KNOWLEDGE } from "./strings.js";
+import strings, { NOT_IN_KNOWLEDGE, REPLY_LANGUAGE } from "./strings.js";
 
 registerStrings("assistants", strings);
 
@@ -32,7 +37,6 @@ const FILE_ACCEPT = FILE_EXTS.map(e => "." + e).join(",");
 const SNIPPET_CHARS = 280;
 /** A last question shorter than this is a follow-up: the previous turn joins the search query. */
 const SHORT_QUERY = 60;
-const PREV_REPLY_CHARS = 200;
 
 let assistants = []; // Assistant[] (newest first)
 let listEl, chipEl;
@@ -111,7 +115,7 @@ export async function loadAssistants() {
     const corrupt = res.headers.get("x-corrupt-assistants");
     if (corrupt && !corruptWarned) {
       corruptWarned = true;
-      toast(t("asst_corrupt", { n: corrupt.split(",").length }), "error", 9000);
+      toast(plural("asst_corrupt", corrupt.split(",").length), "error", 9000);
     }
   } catch (e) {
     console.warn("assistant list failed", e);
@@ -279,21 +283,32 @@ export function isNotInKnowledge(text) {
   });
 }
 
-/** System message: instructions + strict/soft rules + numbered sources (or an explicit "no sources"). */
-export function buildAssistantSystem(a, results, question) {
-  const sentence = NOT_IN_KNOWLEDGE[detectLang(question)];
+/**
+ * System message: instructions + strict/soft rules + numbered sources (or an explicit "no sources").
+ * `deep`: the deep-understanding rules (read everything, reconcile, complete answers, exact numbers);
+ * passages with `kind: "digest"` are labelled as the document's digest.
+ */
+export function buildAssistantSystem(a, results, question, deep = false) {
+  const lang = detectLang(question);
+  const sentence = NOT_IN_KNOWLEDGE[lang];
+  // Last, so it wins over the language of earlier turns in a mixed-language chat.
+  const replyIn = REPLY_LANGUAGE[lang];
   if (!results.length) {
     // No passage passed the threshold: say so plainly and forbid citations, so the model
     // doesn't answer from earlier turns and cite "[1]".
     const rules = a.strict ? t("asst_strictNoSources", { sentence }) : t("asst_softNoSources");
-    return [(a.instructions || "").trim(), `## ${t("asst_rulesHead")}\n${rules}`].filter(Boolean).join("\n\n");
+    return [(a.instructions || "").trim(), `## ${t("asst_rulesHead")}\n${rules}`, replyIn].filter(Boolean).join("\n\n");
   }
-  const rules = a.strict ? t("asst_strictRules", { sentence }) : t("asst_softRules");
-  const sources = results.map((r, i) => `[${t("asst_srcLabel")} ${i + 1}: ${r.doc_name}]\n${r.text}`).join("\n\n");
+  const rules = deep
+    ? (a.strict ? t("asst_deepStrictRules", { sentence }) : t("asst_deepSoftRules"))
+    : (a.strict ? t("asst_strictRules", { sentence }) : t("asst_softRules"));
+  const label = r => (r.kind === "digest" ? `${r.doc_name} — ${t("asst_srcDigest")}` : r.doc_name);
+  const sources = results.map((r, i) => `[${t("asst_srcLabel")} ${i + 1}: ${label(r)}]\n${r.text}`).join("\n\n");
   return [
     (a.instructions || "").trim(),
     `## ${t("asst_rulesHead")}\n${rules}`,
     `## ${t("asst_sourcesHead")}\n${sources}`,
+    replyIn,
   ].filter(Boolean).join("\n\n");
 }
 
@@ -310,8 +325,8 @@ export function isFollowUp(text) {
 
 /**
  * The knowledge-search query for the next reply: the last user message; when it is a short
- * follow-up ("and used products?", «وبدل السكن؟»), the previous user message and the start of
- * the last reply are added so the search knows what it refers to. prepareAssistantTurn also
+ * follow-up ("and used products?", «وبدل السكن؟»), the previous user message is
+ * added so the search knows what it refers to. prepareAssistantTurn also
  * searches the bare message, so a wrongly detected follow-up only adds candidates.
  */
 export function retrievalQuery(messages) {
@@ -321,15 +336,14 @@ export function retrievalQuery(messages) {
   if (li < 0) return "";
   const last = msgs[li].content.trim();
   if (!isFollowUp(last)) return last;
-  let prevUser = "", prevReply = "";
+  // Only the previous question is added: the previous *reply* dominated the query embedding
+  // and pulled results back to the old topic (e.g. «و الضمان؟» after a battery answer).
+  let prevUser = "";
   for (let i = li - 1; i >= 0; i--) {
     const m = msgs[i];
-    if (!prevReply && !prevUser && m.role === "assistant" && !isNotInKnowledge(m.content)) {
-      prevReply = m.content.trim().slice(0, PREV_REPLY_CHARS);
-    }
     if (m.role === "user" && m.content?.trim()) { prevUser = m.content.trim(); break; }
   }
-  return [prevUser, prevReply, last].filter(Boolean).join("\n");
+  return [prevUser, last].filter(Boolean).join("\n");
 }
 
 /** Re-index an assistant from the chat (stale index); resolves true on success. */
@@ -372,9 +386,85 @@ async function searchKnowledge(a, query, question, signal) {
   return merged.filter(r => r.score >= top - RELATIVE_WINDOW).slice(0, TOP_K);
 }
 
+/** Deep understanding: retrieval for one turn on the server (rewrite + digests + expansion + budget). */
+async function deepContext(a, messages, model, signal) {
+  const turns = (messages || [])
+    .filter(m => (m.role === "user" || m.role === "assistant") && m.content?.trim())
+    .map(m => ({ role: m.role, content: m.content }));
+  return call("POST", `/${enc(a.id)}/context`, { messages: turns, model: model || state.model || null }, signal);
+}
+
+const snippetOf = text => (text.length > SNIPPET_CHARS ? text.slice(0, SNIPPET_CHARS) + "…" : text);
+
+/**
+ * Retrieve knowledge for the latest question of `messages` and build the turn:
+ * { system, model, sources, num_ctx, think, debug }. `num_ctx`/`think` are null when the
+ * app settings apply. `debug` (for the test panel): { query, rewritten, rewrite, passages,
+ * budget, used, timings }. Throws AbortError if `signal` aborts.
+ */
+export async function buildTurn(a, messages, signal) {
+  const lastUser = [...messages].reverse().find(m => m.role === "user");
+  const question = lastUser?.content || "";
+  // The assistant's preferred model, if installed (":latest" aware); its capabilities are
+  // fetched now so chat.js can check supportsThinking() for it.
+  const model = a.model && modelInstalled(a.model) ? a.model : null;
+  if (model) await loadCaps(model);
+  let results = [];
+  let debug = { query: question, rewritten: null, rewrite: "skipped", passages: [], budget: 0, used: 0, timings: null };
+  let numCtx = a.num_ctx || null;
+  let think = typeof a.think === "boolean" ? a.think : null;
+  const retrieve = async () => {
+    if (a.deep) {
+      const ctx = await deepContext(a, messages, model, signal);
+      results = ctx.passages || [];
+      numCtx = ctx.num_ctx || numCtx;
+      think = ctx.think;
+      debug = { query: ctx.query, rewritten: ctx.rewritten, rewrite: ctx.rewrite, passages: results,
+        budget: ctx.budget_tokens, used: ctx.used_tokens, timings: ctx.timings, num_ctx: ctx.num_ctx };
+    } else {
+      const query = retrievalQuery(messages);
+      if (!query.trim()) return;
+      results = await searchKnowledge(a, query, question, signal);
+      debug = { ...debug, rewritten: query !== question.trim() ? query : null, passages: results };
+    }
+  };
+  if (question.trim()) {
+    try {
+      await retrieve();
+    } catch (e) {
+      if (e.name === "AbortError") throw e;
+      if (e.code === "reindex_required") {
+        // Index from an older version / another embedding model: offer to rebuild it now.
+        const yes = await confirmDialog(withName("asst_reindexAsk", a.name), { title: t("asst_reindex"), okText: t("asst_reindex") });
+        if (yes && await reindexFromChat(a, signal)) {
+          try { await retrieve(); }
+          catch (e2) { if (e2.name === "AbortError") throw e2; toast(t("asst_searchFailed", { error: e2.message }), "error", 7000); }
+        }
+      } else {
+        toast(e.missingModel ? t("asst_modelMissing", { name: e.missingModel }) : t("asst_searchFailed", { error: e.message }), "error", 7000);
+      }
+    }
+  }
+  return {
+    system: buildAssistantSystem(a, results, question, !!a.deep),
+    model,
+    num_ctx: numCtx,
+    think,
+    debug,
+    sources: results.map((r, i) => ({
+      n: i + 1,
+      doc_name: r.doc_name,
+      snippet: snippetOf(r.text),
+      score: Math.round(r.score * 1000) / 1000,
+      ...(r.kind === "digest" ? { kind: "digest" } : {}),
+    })),
+  };
+}
+
 /**
  * Retrieve passages for the latest question of `conv` and build the turn.
- * Returns { system, model, sources } or null (assistant gone → normal chat).
+ * Returns { system, model, sources, num_ctx, think } or null (assistant gone → normal chat).
+ * chat.js applies `num_ctx` (options.num_ctx) and `think` when they aren't null.
  * Throws AbortError if `signal` aborts.
  */
 export async function prepareAssistantTurn(conv, signal) {
@@ -387,41 +477,9 @@ export async function prepareAssistantTurn(conv, signal) {
       return null;
     }
   }
-  const lastUser = [...conv.messages].reverse().find(m => m.role === "user");
-  const question = lastUser?.content || "";
-  const query = retrievalQuery(conv.messages);
-  let results = [];
-  if (query.trim()) {
-    try {
-      results = await searchKnowledge(a, query, question, signal);
-    } catch (e) {
-      if (e.name === "AbortError") throw e;
-      if (e.code === "reindex_required") {
-        // Index from an older version / another embedding model: offer to rebuild it now.
-        const yes = await confirmDialog(withName("asst_reindexAsk", a.name), { title: t("asst_reindex"), okText: t("asst_reindex") });
-        if (yes && await reindexFromChat(a, signal)) {
-          try { results = await searchKnowledge(a, query, question, signal); }
-          catch (e2) { if (e2.name === "AbortError") throw e2; toast(t("asst_searchFailed", { error: e2.message }), "error", 7000); }
-        }
-      } else {
-        toast(e.missingModel ? t("asst_modelMissing", { name: e.missingModel }) : t("asst_searchFailed", { error: e.message }), "error", 7000);
-      }
-    }
-  }
-  // The assistant's preferred model, if installed (":latest" aware); its capabilities are
-  // fetched now so chat.js can check supportsThinking() for it.
-  const model = a.model && modelInstalled(a.model) ? a.model : null;
-  if (model) await loadCaps(model);
-  return {
-    system: buildAssistantSystem(a, results, question),
-    model,
-    sources: results.map((r, i) => ({
-      n: i + 1,
-      doc_name: r.doc_name,
-      snippet: r.text.length > SNIPPET_CHARS ? r.text.slice(0, SNIPPET_CHARS) + "…" : r.text,
-      score: Math.round(r.score * 1000) / 1000,
-    })),
-  };
+  const turn = await buildTurn(a, conv.messages, signal);
+  delete turn.debug;
+  return turn;
 }
 
 /** Visible answer text of a rendered reply body (without the thinking box). */
@@ -462,6 +520,7 @@ export function sourcesEl(sources) {
       el("div", { class: "asst-src-head" },
         el("span", { class: "asst-src-n", dir: "ltr" }, `[${s.n}]`),
         el("span", { class: "asst-src-name", dir: "auto" }, s.doc_name),
+        s.kind === "digest" ? el("span", { class: "asst-badge" }, t("asst_kindDigest")) : null,
         el("span", { class: "asst-src-score", dir: "ltr" }, Number(s.score).toFixed(2))),
       el("div", { class: "asst-src-snippet", dir: "auto" }, s.snippet)))));
   queueMicrotask(() => {
@@ -478,11 +537,41 @@ const field = (label, control) => el("label", { class: "field" }, el("span", { c
 const isEmbedName = n => /embed|bge|minilm|nomic|e5-/i.test(n);
 
 
+/** Default num_ctx of a deep-mode assistant (server: deep::DEEP_NUM_CTX). */
+export const DEEP_NUM_CTX = 16384;
+/** Above this, an 8B model may not fit an 8 GB GPU (the editor warns). */
+export const COMFORT_NUM_CTX = 16384;
+const TEXT_PAGE_CHARS = 20000;
+
+let templatesCache = null;
+/** Instruction templates from the server (`[{id, icon, name, description, instructions}]`). */
+async function loadTemplates() {
+  if (!templatesCache) {
+    try { templatesCache = await call("GET", "/templates"); } catch { templatesCache = null; return []; }
+  }
+  return templatesCache;
+}
+
+/** Text of a {ar, en} pair in the UI language. */
+const pick = pair => pair?.[getLanguage()] || pair?.ar || "";
+
+/** Docs that need a digest (none yet, or the last attempt failed). */
+const missingDigests = a => (a?.docs || []).filter(d => !d.digest || d.digest.status === "failed");
+
+/** Digest badge text + class of a document. */
+function digestBadge(d) {
+  if (!d.digest) return [t("asst_digestNone"), "none"];
+  if (d.digest.status === "failed") return [t("asst_digestFailed"), "failed"];
+  if (d.digest.status === "edited") return [t("asst_digestEdited"), "ok"];
+  return [t("asst_digestOk"), "ok"];
+}
+
 /** Open the editor for `a` (an Assistant) or for a new assistant (null). */
 export function openEditor(a) {
   const isNew = !a;
   let current = a ? { ...a } : null;
   let busy = false;
+  let opCtl = null; // AbortController of the running upload/reindex/digest stream
 
   const name = el("input", { class: "input", dir: "auto", placeholder: t("asst_namePh"), maxlength: 80 });
   const iconIn = el("input", { class: "input asst-icon-input", maxlength: 8 });
@@ -491,6 +580,14 @@ export function openEditor(a) {
   const model = el("select", { class: "input", dir: "ltr" });
   const strict = el("input", { type: "checkbox" });
   const embed = el("input", { class: "input", dir: "ltr", spellcheck: false });
+  const deepIn = el("input", { type: "checkbox" });
+  const ctxIn = el("input", { class: "input", type: "number", min: 2048, max: 131072, step: 1024, dir: "ltr" });
+  const thinkSel = el("select", { class: "input" },
+    el("option", { value: "auto" }, t("asst_thinkAuto")),
+    el("option", { value: "on" }, t("asst_thinkOn")),
+    el("option", { value: "off" }, t("asst_thinkOff")));
+  const ctxWarn = el("div", { class: "asst-warn-line", hidden: true }, el("span", { html: icon("alert", 14) }), el("span", {}));
+  const tplSel = el("select", { class: "input" }, el("option", { value: "" }, t("asst_templateNone")));
 
   name.value = a?.name || "";
   iconIn.value = a?.icon || "🤖";
@@ -498,6 +595,38 @@ export function openEditor(a) {
   instr.value = a?.instructions || "";
   strict.checked = a ? !!a.strict : true;
   embed.value = a?.embed_model || "bge-m3";
+  deepIn.checked = a ? !!a.deep : true;
+  ctxIn.value = a?.num_ctx || "";
+  thinkSel.value = a?.think === true ? "on" : a?.think === false ? "off" : "auto";
+
+  const autoCtx = () => (deepIn.checked ? DEEP_NUM_CTX : Number(state.settings?.num_ctx || 8192));
+  const renderCtx = () => {
+    ctxIn.placeholder = t("asst_numCtxAuto", { n: autoCtx() });
+    const n = Number(ctxIn.value) || autoCtx();
+    ctxWarn.hidden = n <= COMFORT_NUM_CTX;
+    ctxWarn.lastElementChild.textContent = t("asst_numCtxWarn", { n: COMFORT_NUM_CTX });
+  };
+  ctxIn.addEventListener("input", renderCtx);
+  deepIn.addEventListener("change", renderCtx);
+  renderCtx();
+
+  loadTemplates().then(list => {
+    tplSel.append(...list.map(tp => el("option", { value: tp.id }, `${tp.icon} ${pick(tp.name)}`)));
+  });
+  tplSel.addEventListener("change", async () => {
+    const tp = (templatesCache || []).find(x => x.id === tplSel.value);
+    tplSel.value = "";
+    if (!tp) return;
+    const text = pick(tp.instructions);
+    if (instr.value.trim() && instr.value.trim() !== text.trim()) {
+      const ok = await confirmDialog(t("asst_templateReplace", { name: pick(tp.name) }), { title: t("asst_template") });
+      if (!ok) return;
+    }
+    instr.value = text;
+    if (!desc.value.trim()) desc.value = pick(tp.description);
+    if (!iconIn.value.trim() || iconIn.value.trim() === "🤖") iconIn.value = tp.icon;
+    instr.focus();
+  });
 
   const fillModels = () => {
     const keep = model.value || a?.model || "";
@@ -558,11 +687,16 @@ export function openEditor(a) {
   // --- knowledge ---
   const docsEl = el("div", { class: "asst-docs" });
   const progBar = el("div", { class: "asst-bar" }, el("div", { class: "asst-bar-fill" }));
-  const progText = el("div", { class: "asst-progress-text muted" });
-  const progBox = el("div", { class: "asst-progress", hidden: true }, progBar, progText);
+  const progText = el("span", { class: "asst-progress-text muted" });
+  const progCancel = el("button", { class: "link-btn", type: "button", onclick: () => opCtl?.abort() }, t("asst_cancel"));
+  const progBox = el("div", { class: "asst-progress", hidden: true }, progBar,
+    el("div", { class: "asst-progress-row" }, progText, progCancel));
   const staleBtn = el("button", { class: "btn small", type: "button", html: icon("refresh", 14) }, t("asst_reindexNow"));
   const staleEl = el("div", { class: "asst-stale", hidden: true }, el("span", { html: icon("alert", 15) }),
     el("span", { class: "asst-stale-text" }, t("asst_stale")), staleBtn);
+  const digestAllBtn = el("button", { class: "btn small", type: "button", html: icon("bulb", 14) }, t("asst_digestAll"));
+  const digestText = el("span", { class: "asst-stale-text" });
+  const digestRow = el("div", { class: "asst-digest-row", hidden: true }, el("span", { html: icon("bulb", 15) }), digestText, digestAllBtn);
   const fileIn = el("input", { type: "file", multiple: true, accept: FILE_ACCEPT, hidden: true });
   const drop = el("div", { class: "asst-drop" },
     el("span", { html: icon("file", 18) }),
@@ -575,12 +709,12 @@ export function openEditor(a) {
   const knowledge = el("div", { class: "asst-knowledge" },
     el("div", { class: "section-head" }, el("h3", {}, t("asst_knowledge")),
       el("div", { class: "asst-k-actions" }, addNoteBtn, reindexBtn)),
-    staleEl, drop, progBox, docsEl);
+    staleEl, digestRow, drop, progBox, docsEl);
   const saveFirst = el("p", { class: "muted asst-save-first" }, t("asst_saveFirst"));
 
   const setBusy = on => {
     busy = on;
-    [addNoteBtn, reindexBtn, staleBtn, saveBtn, delBtn].forEach(b => { if (b) b.disabled = on; });
+    [addNoteBtn, reindexBtn, staleBtn, digestAllBtn, saveBtn, delBtn].forEach(b => { if (b) b.disabled = on; });
     drop.classList.toggle("disabled", on);
   };
   const showProgress = p => {
@@ -590,18 +724,33 @@ export function openEditor(a) {
     progText.textContent = p.total > 1 ? `${label} ${p.done}/${p.total}` : label;
   };
 
+  const renderDigestRow = () => {
+    const missing = current?.deep ? missingDigests(current).length : 0;
+    digestRow.hidden = !missing;
+    digestText.textContent = plural("asst_digestMissingN", missing);
+  };
+
   const renderDocs = () => {
+    renderDigestRow();
     const docs = current?.docs || [];
     if (!docs.length) { docsEl.replaceChildren(el("div", { class: "asst-empty" }, t("asst_noDocs"))); return; }
-    docsEl.replaceChildren(...docs.map(d => el("div", { class: "asst-doc" + (d.warning ? " has-warning" : "") },
-      el("span", { class: "asst-doc-ic", html: icon(d.kind === "note" ? "edit" : "file", 16) }),
-      el("div", { class: "asst-doc-main" },
-        el("span", { class: "asst-doc-name", dir: "auto", title: d.name }, d.name),
-        d.warning ? el("span", { class: "asst-doc-warn", title: t(`asst_warn_${d.warning}`) },
-          el("span", { html: icon("alert", 13) }), t(`asst_warn_${d.warning}`)) : null),
-      el("span", { class: "asst-doc-meta muted" }, `${d.kind === "note" ? t("asst_kindNote") : t("asst_kindFile")} · ${plural("asst_chunks", d.chunks)}`),
-      d.kind === "note" ? iconButton("edit", t("asst_editNote"), () => editNote(d)) : null,
-      iconButton("trash", t("asst_deleteDoc"), () => deleteDoc(d), "icon-btn danger"))));
+    docsEl.replaceChildren(...docs.map(d => {
+      const [badge, cls] = digestBadge(d);
+      const showBadge = current?.deep || d.digest;
+      const meta = [d.kind === "note" ? t("asst_kindNote") : t("asst_kindFile"), plural("asst_chunks", d.chunks)];
+      if (d.pages) meta.push(plural("asst_pages", d.pages));
+      return el("div", { class: "asst-doc" + (d.warning ? " has-warning" : "") },
+        el("span", { class: "asst-doc-ic", html: icon(d.kind === "note" ? "edit" : "file", 16) }),
+        el("div", { class: "asst-doc-main" },
+          el("span", { class: "asst-doc-name", dir: "auto", title: d.name }, d.name),
+          d.warning ? el("span", { class: "asst-doc-warn", title: t(`asst_warn_${d.warning}`) },
+            el("span", { html: icon("alert", 13) }), t(`asst_warn_${d.warning}`)) : null),
+        showBadge ? el("span", { class: `asst-badge ${cls}`, title: d.digest?.error || "" }, badge) : null,
+        el("span", { class: "asst-doc-meta muted" }, meta.join(" · ")),
+        iconButton("search", t("asst_viewDoc"), () => openDocViewer(d)),
+        d.kind === "note" ? iconButton("edit", t("asst_editNote"), () => editNote(d)) : null,
+        iconButton("trash", t("asst_deleteDoc"), () => deleteDoc(d), "icon-btn danger"));
+    }));
   };
 
   const refresh = async () => {
@@ -611,8 +760,8 @@ export function openEditor(a) {
     renderDocs();
   };
 
-  /** Handle the final lines of an upload/reindex stream; returns true if all succeeded. */
-  const handleFinals = finals => {
+  /** Handle the final lines of an upload/reindex/digest stream; returns true if all succeeded. */
+  const handleFinals = (finals, digestOp = false) => {
     let ok = true;
     for (const f of finals) {
       if (f.error) {
@@ -620,30 +769,37 @@ export function openEditor(a) {
         const msg = f.missing_model ? missingMsg(f.missing_model) : f.error;
         toast(f.name ? t("asst_docFailed", { name: f.name, error: msg }) : t("asst_failed", { error: msg }), "error", 8000);
       } else if (f.doc) {
-        toast(t("asst_indexed", { name: f.doc.name }), "success");
+        if (!digestOp) toast(t("asst_indexed", { name: f.doc.name }), "success");
         if (f.doc.warning) toast(`${f.doc.name}: ${t(`asst_warn_${f.doc.warning}`)}`, "error", 9000);
-      } else if (f.assistant) toast(t("asst_reindexed"), "success");
+        if (f.digest_error) toast(t("asst_digestFailedMsg", { name: f.doc.name, error: f.digest_error }), "error", 9000);
+      } else if (f.assistant) toast(digestOp ? t("asst_digestsDone") : t("asst_reindexed"), "success");
     }
     return ok;
   };
 
-  const runOp = async (path, init) => {
+  const runOp = async (path, init, digestOp = false) => {
     if (busy) { toast(t("asst_busy")); return false; }
     setBusy(true);
-    showProgress({ status: "extracting", done: 0, total: 1 });
+    opCtl = new AbortController();
+    showProgress({ status: digestOp ? "digesting" : "extracting", done: 0, total: 1 });
     try {
-      const finals = await streamOp(path, init, showProgress);
-      return handleFinals(finals);
+      const finals = await streamOp(path, { ...init, signal: opCtl.signal }, showProgress);
+      return handleFinals(finals, digestOp);
     } catch (e) {
-      toast(e.missingModel ? missingMsg(e.missingModel) : t("asst_failed", { error: e.message }), "error", 8000);
+      if (e.name === "AbortError") toast(t("asst_cancelled"));
+      else toast(e.missingModel ? missingMsg(e.missingModel) : t("asst_failed", { error: e.message }), "error", 8000);
       return false;
     } finally {
+      opCtl = null;
       progBox.hidden = true;
       setBusy(false);
       try { await refresh(); } catch { /* deleted meanwhile */ }
       loadAssistants();
     }
   };
+
+  /** The model that writes digests when the assistant has none: the app's current one. */
+  const uiModel = () => state.model || "";
 
   const uploadFiles = files => {
     if (!files?.length || !current) return;
@@ -654,13 +810,20 @@ export function openEditor(a) {
     if (!good.length) return;
     const fd = new FormData();
     for (const f of good) fd.append("file", f, f.name);
-    return runOp(`/${enc(current.id)}/docs`, { body: fd });
+    return runOp(`/${enc(current.id)}/docs?model=${enc(uiModel())}`, { body: fd });
   };
-  const addNote = (noteName, text) => runOp(`/${enc(current.id)}/docs`, {
+  const addNote = (noteName, text) => runOp(`/${enc(current.id)}/docs?model=${enc(uiModel())}`, {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name: noteName, text }),
   });
   const reindex = () => runOp(`/${enc(current.id)}/reindex`, {});
+  const runDigests = (docId = null, force = false) => {
+    if (!current.model && !uiModel()) { toast(t("asst_digestNoModel"), "error", 7000); return false; }
+    return runOp(`/${enc(current.id)}/digest`, {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ doc_id: docId, force, model: uiModel() || null }),
+    }, true);
+  };
 
   fileIn.addEventListener("change", () => { uploadFiles([...fileIn.files]); fileIn.value = ""; });
   let depth = 0;
@@ -677,6 +840,7 @@ export function openEditor(a) {
   addNoteBtn.addEventListener("click", () => openNoteEditor(null, (n, txt) => addNote(n, txt)));
   reindexBtn.addEventListener("click", reindex);
   staleBtn.addEventListener("click", reindex);
+  digestAllBtn.addEventListener("click", () => runDigests());
 
   async function editNote(d) {
     let text = "";
@@ -701,6 +865,207 @@ export function openEditor(a) {
     loadAssistants();
   }
 
+  /** "What did it read?": stats, the extracted text (paged) and the digest (view/edit/regenerate). */
+  function openDocViewer(d) {
+    const base = `/${enc(current.id)}/docs/${enc(d.id)}`;
+    const stats = el("div", { class: "asst-viewer-stats muted" });
+    const warn = d.warning ? el("div", { class: "asst-warn-line" }, el("span", { html: icon("alert", 14) }),
+      el("span", {}, t(`asst_warn_${d.warning}`))) : null;
+    const textEl = el("pre", { class: "asst-doc-text", dir: "auto" });
+    const pageInfo = el("span", { class: "muted asst-page-info", dir: "auto" });
+    const prev = el("button", { class: "btn small", type: "button" }, t("asst_prevPage"));
+    const next = el("button", { class: "btn small", type: "button" }, t("asst_nextPage"));
+    const textPane = el("div", { class: "asst-viewer-pane" }, textEl, el("div", { class: "asst-pager" }, prev, pageInfo, next));
+    let offset = 0, total = 0;
+    const loadPage = async off => {
+      try {
+        const r = await call("GET", `${base}?offset=${off}&limit=${TEXT_PAGE_CHARS}`);
+        offset = r.offset; total = r.total_chars;
+        textEl.textContent = r.text;
+        textEl.scrollTop = 0;
+        const pages = r.pages ? plural("asst_pages", r.pages) : t("asst_noPages");
+        stats.textContent = [t("asst_docStats", { pages, chars: total.toLocaleString(getLanguage()), chunks: plural("asst_chunks", r.chunks) }),
+          r.digest_chunks ? t("asst_digestChunks", { n: r.digest_chunks }) : null].filter(Boolean).join(" · ");
+        pageInfo.textContent = t("asst_pageOf", { from: total ? offset + 1 : 0, to: Math.min(total, offset + TEXT_PAGE_CHARS), total });
+        prev.disabled = offset <= 0;
+        next.disabled = offset + TEXT_PAGE_CHARS >= total;
+      } catch (e) { toast(e.message, "error"); }
+    };
+    prev.addEventListener("click", () => loadPage(Math.max(0, offset - TEXT_PAGE_CHARS)));
+    next.addEventListener("click", () => loadPage(offset + TEXT_PAGE_CHARS));
+
+    // Digest tab.
+    const dgInfo = el("div", { class: "muted asst-viewer-stats" });
+    const dgText = el("textarea", { class: "input asst-digest-text", rows: 16, dir: "auto" });
+    const dgSave = el("button", { class: "btn small primary", type: "button" }, t("asst_digestSave"));
+    const dgRegen = el("button", { class: "btn small", type: "button", html: icon("bulb", 14) }, t("asst_digestRegenerate"));
+    const dgBar = el("div", { class: "asst-bar" }, el("div", { class: "asst-bar-fill" }));
+    const dgProgText = el("span", { class: "asst-progress-text muted" });
+    let dgCtl = null;
+    const dgCancel = el("button", { class: "link-btn", type: "button", onclick: () => dgCtl?.abort() }, t("asst_cancel"));
+    const dgProg = el("div", { class: "asst-progress", hidden: true }, dgBar, el("div", { class: "asst-progress-row" }, dgProgText, dgCancel));
+    const digestPane = el("div", { class: "asst-viewer-pane", hidden: true }, dgInfo, dgText, dgProg,
+      el("div", { class: "asst-k-actions" }, dgRegen, dgSave));
+    const loadDigest = async () => {
+      const doc = (current.docs || []).find(x => x.id === d.id) || d;
+      let text = "";
+      try { text = (await call("GET", `${base}/digest`)).text || ""; } catch { /* none yet */ }
+      dgText.value = text;
+      const g = doc.digest;
+      dgInfo.textContent = g && g.status !== "failed"
+        ? t("asst_digestInfo", { model: g.model || "—", chars: (g.chars || 0).toLocaleString(getLanguage()) })
+        : g?.status === "failed" ? `${t("asst_digestFailed")}: ${g.error || ""}` : t("asst_digestEmpty");
+      dgRegen.lastChild.textContent = text ? t("asst_digestRegenerate") : t("asst_digestGenerate");
+    };
+    dgSave.addEventListener("click", async () => {
+      if (busy) { toast(t("asst_busy")); return; }
+      dgSave.disabled = true;
+      try {
+        await call("PUT", `${base}/digest`, { text: dgText.value });
+        toast(t("asst_digestSaved"), "success");
+        await refresh();
+        await loadDigest();
+      } catch (e) {
+        toast(e.missingModel ? missingMsg(e.missingModel) : t("asst_failed", { error: e.message }), "error", 8000);
+      } finally { dgSave.disabled = false; }
+    });
+    dgRegen.addEventListener("click", async () => {
+      if (busy || dgCtl) { toast(t("asst_busy")); return; }
+      if (!current.model && !uiModel()) { toast(t("asst_digestNoModel"), "error", 7000); return; }
+      dgCtl = new AbortController();
+      setBusy(true);
+      dgRegen.disabled = dgSave.disabled = true;
+      dgProg.hidden = false;
+      const prog = p => {
+        setBar(dgBar, p.total ? (p.done / p.total) * 100 : 0);
+        const label = t(`asst_status_${p.status}`);
+        dgProgText.textContent = p.total > 1 ? `${label} ${p.done}/${p.total}` : label;
+      };
+      prog({ status: "digesting", done: 0, total: 1 });
+      try {
+        const finals = await streamOp(`/${enc(current.id)}/digest`, {
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ doc_id: d.id, force: true, model: uiModel() || null }),
+          signal: dgCtl.signal,
+        }, prog);
+        handleFinals(finals, true);
+      } catch (e) {
+        if (e.name === "AbortError") toast(t("asst_cancelled"));
+        else toast(e.missingModel ? missingMsg(e.missingModel) : t("asst_failed", { error: e.message }), "error", 8000);
+      } finally {
+        dgCtl = null;
+        dgProg.hidden = true;
+        dgRegen.disabled = dgSave.disabled = false;
+        setBusy(false);
+        try { await refresh(); await loadDigest(); } catch { /* deleted meanwhile */ }
+        loadAssistants();
+      }
+    });
+
+    const tabText = el("button", { class: "asst-tab active", type: "button", role: "tab" }, t("asst_docText"));
+    const tabDigest = el("button", { class: "asst-tab", type: "button", role: "tab" }, t("asst_docDigest"));
+    const show = which => {
+      tabText.classList.toggle("active", which === "text");
+      tabDigest.classList.toggle("active", which === "digest");
+      textPane.hidden = which !== "text";
+      digestPane.hidden = which !== "digest";
+    };
+    tabText.addEventListener("click", () => show("text"));
+    tabDigest.addEventListener("click", () => show("digest"));
+    const close = el("button", { class: "btn", type: "button", onclick: () => vm.close() }, t("cancel"));
+    const vm = openModal({
+      title: el("bdi", {}, d.name),
+      className: "asst-modal asst-viewer",
+      body: el("div", { class: "form" }, stats, warn, el("div", { class: "asst-tabs", role: "tablist" }, tabText, tabDigest), textPane, digestPane),
+      actions: [close],
+      beforeClose: () => !dgCtl,
+    });
+    loadPage(0);
+    loadDigest();
+  }
+
+  // --- test panel ---
+  const testIn = el("textarea", { class: "input", rows: 2, dir: "auto", placeholder: t("asst_testPh") });
+  const testAsk = el("button", { class: "btn small primary", type: "button" }, t("asst_testAsk"));
+  const testClear = el("button", { class: "btn small", type: "button" }, t("asst_testClear"));
+  const testOut = el("div", { class: "asst-test-out" });
+  const testBox = el("details", { class: "asst-test" },
+    el("summary", {}, t("asst_test")),
+    el("p", { class: "muted asst-test-help" }, t("asst_testHelp")),
+    testIn, el("div", { class: "asst-k-actions" }, testAsk, testClear), testOut);
+  let testHistory = [];
+  let testCtl = null;
+  const secs = ms => (Number(ms || 0) / 1000).toFixed(1);
+  const runTest = async () => {
+    const q = testIn.value.trim();
+    if (!q || testCtl) return;
+    const a2 = current;
+    testCtl = new AbortController();
+    testAsk.disabled = true;
+    const messages = [...testHistory, { role: "user", content: q }];
+    const block = el("div", { class: "asst-test-turn" }, el("div", { class: "asst-test-q", dir: "auto" }, q));
+    testOut.append(block);
+    const status = el("div", { class: "muted asst-test-status" }, t("asst_status_embedding"));
+    block.append(status);
+    const t0 = performance.now();
+    try {
+      const turn = await buildTurn(a2, messages, testCtl.signal);
+      const dbg = turn.debug;
+      const tSearch = performance.now();
+      const rw = dbg.rewritten ? el("div", { dir: "auto" }, el("b", {}, `${t("asst_testRewritten")}: `), dbg.rewritten)
+        : el("div", { class: "muted" }, dbg.rewrite === "failed" ? t("asst_testRewriteFailed") : t("asst_testNoRewrite"));
+      const passages = dbg.passages.length
+        ? el("ol", { class: "asst-test-passages" }, dbg.passages.map((p, i) => el("li", {},
+          el("div", { class: "asst-src-head" },
+            el("span", { class: "asst-src-n", dir: "ltr" }, `[${i + 1}]`),
+            el("span", { class: "asst-src-name", dir: "auto" }, p.doc_name),
+            p.kind === "digest" ? el("span", { class: "asst-badge" }, t("asst_kindDigest")) : null,
+            p.expanded ? el("span", { class: "asst-badge" }, t("asst_kindExpanded")) : null,
+            el("span", { class: "asst-src-score", dir: "ltr" }, Number(p.score).toFixed(2))),
+          el("details", {}, el("summary", { class: "asst-src-snippet", dir: "auto" }, snippetOf(p.text).slice(0, 160)),
+            el("div", { class: "asst-src-snippet", dir: "auto" }, p.text)))))
+        : el("div", { class: "muted" }, t("asst_testNoPassages"));
+      const budget = dbg.budget ? el("div", { class: "muted", dir: "auto" }, t("asst_testBudget", { used: dbg.used, budget: dbg.budget, ctx: dbg.num_ctx })) : null;
+      status.replaceWith(
+        el("div", { class: "asst-test-sec" }, el("b", {}, `${t("asst_testQuery")}: `), el("span", { dir: "auto" }, dbg.query)), rw,
+        el("div", { class: "asst-test-sec" }, el("b", {}, `${t("asst_testPassages")} (${dbg.passages.length})`)), passages, budget);
+      // Answer (streamed, not saved).
+      const s = state.settings || {};
+      const mdl = turn.model || state.model;
+      const payload = {
+        model: mdl,
+        messages: [{ role: "system", content: turn.system }, ...messages.map(m => ({ role: m.role, content: m.content }))],
+        options: { temperature: Number(s.temperature ?? 0.7), num_ctx: Number(turn.num_ctx || s.num_ctx || 8192) },
+      };
+      if (supportsThinking(mdl)) payload.think = typeof turn.think === "boolean" ? turn.think : !!s.think;
+      const think = el("details", { class: "asst-test-think", hidden: true }, el("summary", {}, t("thinking")), el("div", { dir: "auto" }));
+      const ans = el("div", { class: "asst-test-answer", dir: "auto" });
+      const times = el("div", { class: "muted asst-test-times", dir: "auto" });
+      block.append(el("div", { class: "asst-test-sec" }, el("b", {}, t("asst_testAnswer"))), think, ans, times);
+      let content = "", thinking = "";
+      for await (const chunk of api.chatStream(payload, testCtl.signal)) {
+        if (chunk.message) {
+          content += chunk.message.content || "";
+          thinking += chunk.message.thinking || "";
+          ans.textContent = content;
+          if (thinking) { think.hidden = false; think.lastElementChild.textContent = thinking; }
+        }
+      }
+      const tEnd = performance.now();
+      times.textContent = t("asst_testTimes", { rw: secs(dbg.timings?.rewrite_ms), s: secs(tSearch - t0), a: secs(tEnd - tSearch) });
+      testHistory = [...messages, { role: "assistant", content }];
+      testIn.value = "";
+    } catch (e) {
+      if (e.name !== "AbortError") block.append(el("div", { class: "asst-warn-line" }, t("asst_failed", { error: e.message })));
+    } finally {
+      testCtl = null;
+      testAsk.disabled = false;
+    }
+  };
+  testAsk.addEventListener("click", runTest);
+  testIn.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); runTest(); } });
+  testClear.addEventListener("click", () => { testCtl?.abort(); testHistory = []; testOut.replaceChildren(); });
+
   // --- footer ---
   const saveBtn = el("button", { class: "btn primary", type: "button" }, isNew ? t("asst_create") : t("asst_save"));
   const cancelBtn = el("button", { class: "btn", type: "button", onclick: () => m.close() }, t("cancel"));
@@ -708,6 +1073,7 @@ export function openEditor(a) {
   const footSpacer = el("span", { class: "spacer" });
 
   saveBtn.addEventListener("click", async () => {
+    const ctxVal = Number(ctxIn.value);
     const body = {
       name: name.value.trim(),
       icon: iconIn.value.trim() || "🤖",
@@ -716,6 +1082,9 @@ export function openEditor(a) {
       model: model.value || null,
       strict: strict.checked,
       embed_model: embed.value.trim() || "bge-m3",
+      deep: deepIn.checked,
+      num_ctx: ctxVal > 0 ? Math.round(ctxVal) : null,
+      think: thinkSel.value === "auto" ? null : thinkSel.value === "on",
     };
     if (!body.name) { toast(t("asst_nameRequired"), "error"); name.focus(); return; }
     saveBtn.disabled = true;
@@ -728,11 +1097,17 @@ export function openEditor(a) {
         return;
       }
       const embedChanged = body.embed_model !== current.embed_model;
+      const deepTurnedOn = body.deep && !current.deep;
       current = { ...current, ...(await call("PUT", `/${enc(current.id)}`, body)) };
       toast(t("asst_saved"), "success");
       await loadAssistants();
       if (embedChanged && current.docs?.length) await reindex();
       else await refresh();
+      // Deep understanding just enabled: offer to digest the existing documents now.
+      const missing = missingDigests(current).length;
+      if (deepTurnedOn && missing && await confirmDialog(t("asst_deepEnableAsk", { n: missing }), { title: t("asst_deep"), okText: t("asst_digestAll") })) {
+        await runDigests();
+      }
     } catch (e) {
       toast(t("asst_failed", { error: e.message }), "error");
     } finally {
@@ -749,11 +1124,19 @@ export function openEditor(a) {
     await loadAssistants();
   });
 
+  const advanced = el("details", { class: "asst-advanced" },
+    el("summary", {}, t("asst_advanced")),
+    el("div", { class: "field-row" },
+      field(t("asst_numCtx"), ctxIn),
+      field(t("asst_think"), thinkSel)),
+    ctxWarn);
+
   const body = el("div", { class: "form asst-editor" },
     el("div", { class: "field-row" },
       el("label", { class: "field asst-icon-field" }, el("span", { class: "field-label" }, t("asst_icon")), iconIn),
       field(t("asst_name"), name)),
     field(t("asst_description"), desc),
+    field(t("asst_template"), tplSel),
     field(t("asst_instructions"), instr),
     el("div", { class: "field-row" },
       field(t("asst_model"), model),
@@ -762,7 +1145,12 @@ export function openEditor(a) {
         el("div", { class: "asst-embed-row" }, embed, pullBtn))),
     pullBox,
     el("label", { class: "asst-toggle" }, strict, el("span", {}, t("asst_strict"))),
-    isNew ? saveFirst : knowledge);
+    el("div", { class: "asst-deep" },
+      el("label", { class: "asst-toggle" }, deepIn, el("span", {}, el("b", {}, t("asst_deep")))),
+      el("p", { class: "muted asst-deep-help" }, t("asst_deepHelp"))),
+    advanced,
+    isNew ? saveFirst : knowledge,
+    isNew ? null : testBox);
   body.addEventListener("models", () => { fillModels(); renderEmbedState(); });
 
   // The assistant's name is user text: isolate it so "Edit: <Arabic name>" keeps its order.
@@ -772,7 +1160,11 @@ export function openEditor(a) {
     className: "asst-modal",
     body,
     actions: [delBtn, footSpacer, cancelBtn, saveBtn].filter(Boolean),
-    beforeClose: () => !busy && !pullCtl,
+    beforeClose: () => {
+      if (busy || pullCtl) return false;
+      testCtl?.abort();
+      return true;
+    },
   });
   if (!isNew) m.el.setAttribute("aria-label", t("asst_editorEdit", { name: a.name }));
   if (!isNew) refresh().catch(e => toast(e.message, "error"));

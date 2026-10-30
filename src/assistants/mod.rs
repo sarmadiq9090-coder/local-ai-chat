@@ -8,13 +8,22 @@
 //! Pipeline: [`extract`] → [`chunk`] → [`embed`] (Ollama `/api/embed`, batches
 //! of 32, unit vectors) → [`index`] (cosine top-k + keyword boost).
 //!
+//! Deep understanding (v2.2, per-assistant `deep`): [`digest`] writes a
+//! structured digest per document with the chat model (`docs/{doc_id}.digest.md`,
+//! embedded as `kind: "digest"` chunks) and [`deep`] builds each turn's
+//! context (query rewriting, neighbour expansion, token budget).
+//!
 //! Mutations of one assistant are serialized by a per-assistant async lock;
 //! searches read the cached index without taking it.
 
 pub mod chunk;
+pub mod deep;
+pub mod digest;
 pub mod embed;
 pub mod extract;
 pub mod index;
+pub mod llm;
+pub mod templates;
 pub mod types;
 
 use std::collections::HashMap;
@@ -118,6 +127,8 @@ struct Inner {
     cache: RwLock<HashMap<String, Arc<Index>>>,
     /// Per-assistant write locks.
     locks: std::sync::Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// Query rewrites by conversation tail (deep mode), see [`deep`].
+    rewrites: std::sync::Mutex<HashMap<String, String>>,
 }
 
 impl AssistantStore {
@@ -130,6 +141,7 @@ impl AssistantStore {
                 http,
                 cache: RwLock::new(HashMap::new()),
                 locks: std::sync::Mutex::new(HashMap::new()),
+                rewrites: std::sync::Mutex::new(HashMap::new()),
             }),
         }
     }
@@ -245,6 +257,9 @@ impl AssistantStore {
             model: new.model.filter(|s| !s.trim().is_empty()),
             strict: new.strict.unwrap_or(true),
             embed_model: clean_model(new.embed_model),
+            deep: new.deep.unwrap_or(true),
+            num_ctx: new.num_ctx.map(clamp_ctx),
+            think: new.think,
             created_at: now,
             updated_at: now,
             ..Default::default()
@@ -283,6 +298,15 @@ impl AssistantStore {
         }
         if patch.embed_model.is_some() {
             a.embed_model = clean_model(patch.embed_model);
+        }
+        if let Some(v) = patch.deep {
+            a.deep = v;
+        }
+        if let Some(v) = patch.num_ctx {
+            a.num_ctx = v.map(clamp_ctx);
+        }
+        if let Some(v) = patch.think {
+            a.think = v;
         }
         a.updated_at = now_ms();
         self.write(&a)?;
@@ -349,6 +373,7 @@ impl AssistantStore {
             },
             dim: idx.dim,
             chunks: idx.chunks.len(),
+            digest_chunks: idx.chunks.iter().filter(|c| c.kind.is_some()).count(),
             stale: is_stale(&a, &idx),
         })
     }
@@ -429,20 +454,26 @@ impl AssistantStore {
             done: 0,
             total: 1,
         });
-        let (kind, size, text, warning) = match input {
+        let (kind, size, text, warning, pages) = match input {
             DocInput::File(bytes) => {
                 let size = bytes.len() as u64;
                 let ex = extract::extract(name, bytes).await?;
-                (DocKind::File, size, ex.text, ex.warning)
+                (DocKind::File, size, ex.text, ex.warning, ex.pages)
             }
             DocInput::Note(text) => (
                 DocKind::Note,
                 text.len() as u64,
                 extract::normalize(&text),
                 None,
+                None,
             ),
         };
         if text.is_empty() {
+            if pages.is_some() {
+                bail!(
+                    "no text found in {name}: it is probably a scanned PDF (images only); upload a copy with OCR text"
+                );
+            }
             bail!("no text found in {name}");
         }
         check_doc_text_size(name, text.len())?;
@@ -460,6 +491,8 @@ impl AssistantStore {
             chunks: 0,
             added_at: now_ms(),
             warning: warning.map(str::to_string),
+            pages,
+            chars: Some(text.chars().count()),
             ..Default::default()
         };
         let doc_path = self.doc_file(id, &doc.id);
@@ -525,11 +558,16 @@ impl AssistantStore {
                 .map(|(i, (text, vec))| IndexedChunk {
                     doc_id: doc.id.clone(),
                     i,
+                    kind: None,
                     text,
                     vec,
                 }),
         );
-        doc.chunks = new_idx.chunks.iter().filter(|c| c.doc_id == doc.id).count();
+        doc.chunks = new_idx
+            .chunks
+            .iter()
+            .filter(|c| c.doc_id == doc.id && c.kind.is_none())
+            .count();
         self.save_index(&a.id, new_idx).await?;
 
         a.docs.push(doc.clone());
@@ -576,6 +614,7 @@ impl AssistantStore {
         if Self::valid_id(doc_id) {
             let _ = std::fs::remove_file(self.doc_file(id, doc_id));
         }
+        self.remove_digest_file(id, doc_id);
         Ok(())
     }
 
@@ -601,7 +640,7 @@ impl AssistantStore {
         a: &mut Assistant,
         progress: &mut (impl FnMut(Progress) + Send),
     ) -> anyhow::Result<()> {
-        let mut owners = Vec::new(); // (doc_id, i)
+        let mut owners = Vec::new(); // (doc_id, i, is_digest)
         let mut texts = Vec::new();
         for doc in &a.docs {
             let text = match std::fs::read_to_string(self.doc_file(&a.id, &doc.id)) {
@@ -610,8 +649,18 @@ impl AssistantStore {
                 Err(e) => return Err(e.into()),
             };
             for (i, piece) in chunk::chunk(&text).into_iter().enumerate() {
-                owners.push((doc.id.clone(), i));
+                owners.push((doc.id.clone(), i, false));
                 texts.push(piece);
+            }
+            // Deep understanding: re-embed an existing digest too.
+            if let Some(dg) = self.digest_text(&a.id, &doc.id)? {
+                for (i, piece) in digest::digest_chunks(&doc.name, &dg)
+                    .into_iter()
+                    .enumerate()
+                {
+                    owners.push((doc.id.clone(), i, true));
+                    texts.push(piece);
+                }
             }
         }
         check_chunk_total(texts.len())?;
@@ -628,15 +677,36 @@ impl AssistantStore {
             .into_iter()
             .zip(texts)
             .zip(vecs)
-            .map(|(((doc_id, i), text), vec)| IndexedChunk {
+            .map(|(((doc_id, i, dg), text), vec)| IndexedChunk {
                 doc_id,
                 i,
+                kind: dg.then(|| digest::DIGEST_KIND.to_string()),
                 text,
                 vec,
             })
             .collect();
         for doc in &mut a.docs {
-            doc.chunks = chunks.iter().filter(|c| c.doc_id == doc.id).count();
+            doc.chunks = chunks
+                .iter()
+                .filter(|c| c.doc_id == doc.id && c.kind.is_none())
+                .count();
+            let dg = chunks
+                .iter()
+                .filter(|c| c.doc_id == doc.id && c.kind.is_some())
+                .count();
+            if dg > 0 {
+                let meta = doc.digest.get_or_insert_with(|| DigestMeta {
+                    status: "ok".into(),
+                    ..Default::default()
+                });
+                if meta.status == "failed" {
+                    meta.status = "ok".into();
+                    meta.error = None;
+                }
+                meta.chunks = dg;
+            } else if doc.digest.as_ref().is_some_and(|g| g.status != "failed") {
+                doc.digest = None; // digest file gone
+            }
         }
         self.save_index(
             &a.id,
@@ -677,7 +747,7 @@ impl AssistantStore {
         if query.is_empty() || idx.chunks.is_empty() {
             return Ok(Vec::new());
         }
-        if idx.embed_model != a.embed_model {
+        if !same_model(&idx.embed_model, &a.embed_model) {
             return Err(ReindexRequired(format!(
                 "the knowledge index was built with '{}' but the assistant uses '{}'; re-index required",
                 idx.embed_model, a.embed_model
@@ -692,6 +762,25 @@ impl AssistantStore {
             .into());
         }
         let k = k.unwrap_or(index::DEFAULT_K).clamp(1, 50);
+        // Digest chunks (deep mode, see `context`) are left out here: score
+        // only document chunks so `/search` behaves as before.
+        let text_only;
+        let idx: &Index = if idx.chunks.iter().any(|c| c.kind.is_some()) {
+            text_only = Index {
+                version: idx.version,
+                embed_model: idx.embed_model.clone(),
+                dim: idx.dim,
+                chunks: idx
+                    .chunks
+                    .iter()
+                    .filter(|c| c.kind.is_none())
+                    .cloned()
+                    .collect(),
+            };
+            &text_only
+        } else {
+            &idx
+        };
         let qvec = embed::embed(
             &self.inner.http,
             ollama_url,
@@ -707,7 +796,7 @@ impl AssistantStore {
             .map(|d| (d.id.as_str(), d.name.as_str()))
             .collect();
         Ok(
-            index::top_k(&idx, &qvec, query, usize::MAX, index::MIN_SCORE)
+            index::top_k(idx, &qvec, query, usize::MAX, index::MIN_SCORE)
                 .into_iter()
                 .filter_map(|(i, score)| {
                     let c = &idx.chunks[i];
@@ -730,17 +819,44 @@ impl AssistantStore {
 /// what the index holds.
 fn is_stale(a: &Assistant, idx: &Index) -> bool {
     if !idx.chunks.is_empty()
-        && (idx.embed_model != a.embed_model || idx.version != index::INDEX_VERSION)
+        && (!same_model(&idx.embed_model, &a.embed_model) || idx.version != index::INDEX_VERSION)
     {
         return true;
     }
     let mut counts: HashMap<&str, usize> = HashMap::new();
+    let mut digests: HashMap<&str, usize> = HashMap::new();
     for c in &idx.chunks {
-        *counts.entry(c.doc_id.as_str()).or_default() += 1;
+        let m = if c.kind.is_some() {
+            &mut digests
+        } else {
+            &mut counts
+        };
+        *m.entry(c.doc_id.as_str()).or_default() += 1;
     }
-    a.docs
-        .iter()
-        .any(|d| counts.get(d.id.as_str()).copied().unwrap_or(0) != d.chunks)
+    a.docs.iter().any(|d| {
+        let digest_expected = match &d.digest {
+            Some(g) if g.status != "failed" => g.chunks,
+            _ => 0,
+        };
+        counts.get(d.id.as_str()).copied().unwrap_or(0) != d.chunks
+            || digests.get(d.id.as_str()).copied().unwrap_or(0) != digest_expected
+    })
+}
+
+/// Same Ollama model name: `"bge-m3"` and `"bge-m3:latest"` are one model.
+pub(crate) fn same_model(a: &str, b: &str) -> bool {
+    let key = |m: &str| {
+        m.trim()
+            .strip_suffix(":latest")
+            .unwrap_or(m.trim())
+            .to_string()
+    };
+    key(a) == key(b)
+}
+
+/// Keep an assistant's `num_ctx` within [`deep::MIN_NUM_CTX`]..=[`deep::MAX_NUM_CTX`].
+fn clamp_ctx(n: u32) -> u32 {
+    n.clamp(deep::MIN_NUM_CTX, deep::MAX_NUM_CTX)
 }
 
 fn clean_model(m: Option<String>) -> String {

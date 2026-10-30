@@ -26,6 +26,20 @@ pub struct Assistant {
     /// Answer only from the knowledge base.
     pub strict: bool,
     pub embed_model: String,
+    /// Deep understanding (v2.2): document digests, context expansion, a token
+    /// budget and query rewriting. Missing in older files = off; new
+    /// assistants get it on.
+    #[serde(default)]
+    pub deep: bool,
+    /// Context length (`options.num_ctx`) for this assistant's chats; `None` =
+    /// automatic ([`crate::assistants::deep::DEEP_NUM_CTX`] in deep mode, the
+    /// app setting otherwise).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub num_ctx: Option<u32>,
+    /// Thinking for answers (when the model supports it); `None` = automatic
+    /// (on in deep mode, the app setting otherwise).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub think: Option<bool>,
     /// Unix epoch milliseconds (same convention as conversations).
     pub created_at: i64,
     pub updated_at: i64,
@@ -45,6 +59,9 @@ impl Default for Assistant {
             model: None,
             strict: true,
             embed_model: DEFAULT_EMBED_MODEL.into(),
+            deep: false,
+            num_ctx: None,
+            think: None,
             created_at: 0,
             updated_at: 0,
             docs: Vec::new(),
@@ -76,8 +93,39 @@ pub struct DocMeta {
     /// whose text had to be repaired and may be inaccurate).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub warning: Option<String>,
+    /// PDF page count (files indexed since v2.2).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pages: Option<u32>,
+    /// Characters of extracted text (files indexed since v2.2).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chars: Option<usize>,
+    /// Deep-understanding digest (`docs/{id}.digest.md`), if one was made.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub digest: Option<DigestMeta>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+/// State of a document's digest.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct DigestMeta {
+    /// `"ok"` (generated), `"edited"` (saved by the user) or `"failed"`.
+    pub status: String,
+    /// Chat model that wrote it.
+    pub model: String,
+    /// Characters of digest text.
+    pub chars: usize,
+    /// Digest chunks in the index (`kind: "digest"`).
+    pub chunks: usize,
+    /// Unix ms.
+    pub created_at: i64,
+    /// Generation time in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub millis: Option<u64>,
+    /// Why generation failed (status `"failed"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// Body of `POST /api/app/assistants`.
@@ -91,6 +139,9 @@ pub struct NewAssistant {
     pub model: Option<String>,
     pub strict: Option<bool>,
     pub embed_model: Option<String>,
+    pub deep: Option<bool>,
+    pub num_ctx: Option<u32>,
+    pub think: Option<bool>,
 }
 
 /// Body of `PUT /api/app/assistants/{id}`: only present fields change.
@@ -106,12 +157,19 @@ pub struct AssistantPatch {
     pub model: Option<Option<String>>,
     pub strict: Option<bool>,
     pub embed_model: Option<String>,
+    pub deep: Option<bool>,
+    /// `null` = automatic.
+    #[serde(deserialize_with = "double_option")]
+    pub num_ctx: Option<Option<u32>>,
+    /// `null` = automatic.
+    #[serde(deserialize_with = "double_option")]
+    pub think: Option<Option<bool>>,
 }
 
-fn double_option<'de, D: serde::Deserializer<'de>>(
+fn double_option<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
     d: D,
-) -> Result<Option<Option<String>>, D::Error> {
-    Option::<String>::deserialize(d).map(Some)
+) -> Result<Option<Option<T>>, D::Error> {
+    Option::<T>::deserialize(d).map(Some)
 }
 
 /// What to add to the knowledge base.
@@ -149,8 +207,12 @@ pub struct Index {
 #[serde(default)]
 pub struct IndexedChunk {
     pub doc_id: String,
-    /// Position of the chunk within its document.
+    /// Position of the chunk within its document (or within its digest).
     pub i: usize,
+    /// `None` = document text; `Some("digest")` = a piece of the document's
+    /// digest (deep understanding).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
     pub text: String,
     /// Unit-length embedding (cosine similarity is a dot product).
     pub vec: Vec<f32>,
@@ -171,6 +233,8 @@ pub struct IndexStatus {
     pub embed_model: String,
     pub dim: usize,
     pub chunks: usize,
+    /// Digest chunks among `chunks`.
+    pub digest_chunks: usize,
     /// The index was built with a different model than `assistant.embed_model`,
     /// by an older chunker version, or is missing chunks for some docs: a
     /// re-index is required.

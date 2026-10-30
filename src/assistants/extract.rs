@@ -22,12 +22,26 @@ use unicode_normalization::UnicodeNormalization;
 /// Warning recorded on a document whose Arabic PDF text had to be repaired
 /// (`DocMeta.warning`); the UI suggests a .docx/.txt copy instead.
 pub const WARN_ARABIC_PDF: &str = "arabic_pdf_quality";
+/// Warning for a PDF with almost no text per page: most likely scanned images
+/// (no OCR here); the UI suggests uploading an OCR'd copy.
+pub const WARN_SCANNED_PDF: &str = "scanned_pdf";
+/// Below this many characters of text per page a PDF counts as scanned.
+pub const SCANNED_CHARS_PER_PAGE: usize = 80;
 
 /// Extracted text plus an optional quality warning.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Extracted {
     pub text: String,
     pub warning: Option<&'static str>,
+    /// Page count (PDFs only).
+    pub pages: Option<u32>,
+}
+
+/// `Some(WARN_SCANNED_PDF)` when a PDF has fewer than
+/// [`SCANNED_CHARS_PER_PAGE`] characters of text per page on average.
+pub fn scanned_warning(chars: usize, pages: Option<u32>) -> Option<&'static str> {
+    let pages = pages.filter(|&p| p > 0)? as usize;
+    (chars < pages * SCANNED_CHARS_PER_PAGE).then_some(WARN_SCANNED_PDF)
 }
 
 /// Extensions decoded as UTF-8 text.
@@ -51,19 +65,28 @@ pub fn is_supported(name: &str) -> bool {
 pub async fn extract(name: &str, bytes: Vec<u8>) -> anyhow::Result<Extracted> {
     let ext = extension(name).unwrap_or_default();
     if ext == "pdf" {
-        let raw = tokio::task::spawn_blocking(move || pdf_extract::extract_text_from_mem(&bytes))
-            .await
-            .context("PDF extraction failed")?
-            .map_err(|e| anyhow::anyhow!("could not read PDF: {e}"))?;
+        let (raw, pages) = tokio::task::spawn_blocking(move || {
+            let pages = pdf_extract::Document::load_mem(&bytes)
+                .ok()
+                .map(|d| d.get_pages().len() as u32);
+            pdf_extract::extract_text_from_mem(&bytes).map(|t| (t, pages))
+        })
+        .await
+        .context("PDF extraction failed")?
+        .map_err(|e| anyhow::anyhow!("could not read PDF: {e}"))?;
         let (text, warning) = fix_arabic_pdf(&raw);
+        let text = pdf_paragraphs(&normalize(&text));
+        let warning = scanned_warning(text.chars().count(), pages).or(warning);
         Ok(Extracted {
-            text: pdf_paragraphs(&normalize(&text)),
+            text,
             warning,
+            pages,
         })
     } else if TEXT_EXTS.contains(&ext.as_str()) {
         Ok(Extracted {
             text: normalize(&String::from_utf8_lossy(&bytes)),
             warning: None,
+            pages: None,
         })
     } else {
         bail!("unsupported file type: {name}");
@@ -109,12 +132,15 @@ fn mirror(c: char) -> char {
 
 /// Map presentation forms to base letters (NFKC on those chars only, so other
 /// text such as `²` or `ﬁ` is left alone). Farsi-yeh forms, which some fonts
-/// use for the Arabic ي, become ي.
+/// use for the Arabic ي, become ي; heh-doachashmee forms (U+FBAA–U+FBAD, NFKC
+/// would give Urdu ھ), which some fonts use for the Arabic ه, become ه.
 fn unshape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         if matches!(c, '\u{FBFC}'..='\u{FBFF}') {
             out.push('ي');
+        } else if matches!(c, '\u{FBAA}'..='\u{FBAD}' | '\u{06BE}') {
+            out.push('ه');
         } else if is_presentation_form(c) {
             out.extend(c.to_string().nfkc());
         } else {
@@ -409,6 +435,16 @@ pub fn normalize(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn heh_doachashmee_becomes_arabic_heh() {
+        // «لأهلية» with a heh-doachashmee medial form, and «شهادة» with the Urdu ھ.
+        assert_eq!(
+            unshape("\u{FEDF}\u{FE84}\u{FBAC}\u{FEE0}\u{FEF4}\u{FE94}"),
+            "لأهلية"
+        );
+        assert_eq!(unshape("ش\u{06BE}ادة"), "شهادة");
+    }
 
     #[test]
     fn normalize_whitespace_and_nuls() {

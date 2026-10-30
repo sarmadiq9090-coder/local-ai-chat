@@ -44,13 +44,51 @@ async fn fake_embed(Json(body): Json<Value>) -> (StatusCode, Json<Value>) {
     )
 }
 
+/// Streaming `/api/chat`: a rewrite prompt gets a standalone query, anything
+/// else a small Markdown digest. Model `"missing"` → 404 like Ollama.
+async fn fake_chat(Json(body): Json<Value>) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let model = body["model"].as_str().unwrap_or_default();
+    if model == "missing" {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "model \"missing\" not found, try pulling it first" })),
+        )
+            .into_response();
+    }
+    assert_eq!(body["think"], json!(false));
+    let system = body["messages"][0]["content"].as_str().unwrap_or_default();
+    let reply = if system.contains("standalone search query") {
+        "<think>x</think>Query: \"housing allowance for managers\"".to_string()
+    } else {
+        "## Overview\nThe handbook explains housing allowance and leave.\n\n## Key facts and numbers\n- Housing allowance: 25% of salary".to_string()
+    };
+    let half = reply.len() / 2;
+    let half = (0..=half)
+        .rev()
+        .find(|&i| reply.is_char_boundary(i))
+        .unwrap();
+    let lines = format!(
+        "{}\n{}\n",
+        json!({ "message": { "content": &reply[..half] }, "done": false }),
+        json!({ "message": { "content": &reply[half..] }, "done": true })
+    );
+    (
+        [(axum::http::header::CONTENT_TYPE, "application/x-ndjson")],
+        lines,
+    )
+        .into_response()
+}
+
 async fn fake_ollama() -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
         axum::serve(
             listener,
-            Router::new().route("/api/embed", post(fake_embed)),
+            Router::new()
+                .route("/api/embed", post(fake_embed))
+                .route("/api/chat", post(fake_chat)),
         )
         .await
         .unwrap();
@@ -371,6 +409,7 @@ async fn oversized_doc_and_knowledge_base_are_rejected_before_embedding() {
             .map(|i| IndexedChunk {
                 doc_id: "old".into(),
                 i,
+                kind: None,
                 text: String::new(),
                 vec: Vec::new(),
             })
@@ -649,5 +688,306 @@ async fn embed_model_installed_check() {
         store.missing_embed_model(&url, &a.id).await.as_deref(),
         Some("nomic-embed-text")
     );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn latest_tag_is_the_same_embed_model() {
+    assert!(same_model("bge-m3", "bge-m3:latest"));
+    assert!(same_model(" bge-m3:latest", "bge-m3"));
+    assert!(!same_model("bge-m3", "bge-m3:567m"));
+    let a = Assistant {
+        embed_model: "bge-m3".into(),
+        ..Default::default()
+    };
+    let idx = Index {
+        version: index::INDEX_VERSION,
+        embed_model: "bge-m3:latest".into(),
+        dim: 1,
+        chunks: vec![IndexedChunk {
+            doc_id: "x".into(),
+            ..Default::default()
+        }],
+    };
+    assert!(!is_stale(&a, &idx));
+    let other = Index {
+        embed_model: "nomic-embed-text".into(),
+        ..idx
+    };
+    assert!(is_stale(&a, &other));
+}
+
+#[tokio::test]
+async fn deep_mode_digest_context_and_cleanup() {
+    use super::deep::{AppDefaults, ChatTurn, ContextRequest, KIND_DIGEST};
+    let url = fake_ollama().await;
+    let (store, dir) = temp_store(reqwest::Client::new());
+    let a = store
+        .create(NewAssistant {
+            name: "HR".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    assert!(a.deep, "new assistants get deep understanding");
+    let text = (1..=12)
+        .map(|i| format!("## Section {i}\nRule {i}: housing allowance grade {i} is {} dollars per month for staff.", i * 100))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let doc = store
+        .add_document(
+            &url,
+            &a.id,
+            "handbook.md",
+            DocInput::File(text.into_bytes()),
+            |_| {},
+        )
+        .await
+        .unwrap();
+    assert!(doc.chunks >= 2);
+    assert!(doc.chars.unwrap() > 100);
+
+    // Digest: generated, saved, embedded; the index stays consistent.
+    let never = || false;
+    let job = digest::DigestJob {
+        model: "m",
+        num_ctx: 8192,
+        cancelled: &never,
+    };
+    let mut events = Vec::new();
+    let mut results = Vec::new();
+    let a2 = store
+        .digest_documents(
+            &url,
+            &a.id,
+            None,
+            false,
+            &job,
+            |p| events.push(p),
+            |d, _, r| {
+                results.push((
+                    d.to_string(),
+                    r.map(|m| m.status).map_err(|e| e.to_string()),
+                ))
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(results, vec![(doc.id.clone(), Ok("ok".to_string()))]);
+    assert!(
+        events
+            .iter()
+            .any(|p| p.status == "digesting" && p.done == 1)
+    );
+    let meta = a2.docs[0].digest.clone().unwrap();
+    assert!(meta.chunks >= 1 && meta.chars > 20 && meta.model == "m");
+    assert!(
+        store
+            .digest_text(&a.id, &doc.id)
+            .unwrap()
+            .unwrap()
+            .contains("25%")
+    );
+    let st = store.index_status(&a.id).await.unwrap();
+    assert_eq!(st.digest_chunks, meta.chunks);
+    assert!(!st.stale);
+    // Nothing left to do without force.
+    let mut n = 0;
+    store
+        .digest_documents(&url, &a.id, None, false, &job, |_| {}, |_, _, _| n += 1)
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+
+    // /search never returns digest chunks.
+    let r = store
+        .search(&url, &a.id, "housing allowance overview handbook", Some(50))
+        .await
+        .unwrap();
+    assert!(r.iter().all(|x| !x.text.contains("## Overview")));
+
+    // Context: rewritten follow-up, full digest first, expanded passages.
+    let app = AppDefaults {
+        num_ctx: 8192,
+        think: false,
+        default_model: Some("m".into()),
+    };
+    let turn = |r: &str, c: &str| ChatTurn {
+        role: r.into(),
+        content: c.into(),
+    };
+    let req = ContextRequest {
+        messages: vec![
+            turn("user", "What is the housing allowance for grade 3?"),
+            turn("assistant", "It is 300 dollars per month."),
+            turn("user", "and for managers?"),
+        ],
+        ..Default::default()
+    };
+    let ctx = store.context(&url, &a.id, req.clone(), &app).await.unwrap();
+    assert_eq!(ctx.rewrite, "done");
+    assert_eq!(
+        ctx.rewritten.as_deref(),
+        Some("housing allowance for managers")
+    );
+    assert_eq!(ctx.queries.len(), 2);
+    assert_eq!(ctx.num_ctx, deep::DEEP_NUM_CTX);
+    assert!(ctx.think);
+    assert!(!ctx.passages.is_empty());
+    assert_eq!(ctx.passages[0].kind, KIND_DIGEST);
+    assert!(ctx.passages[0].full_digest);
+    assert!(ctx.used_tokens <= ctx.budget_tokens);
+    assert!(ctx.passages.iter().any(|p| p.expanded));
+    // Second call: cached rewrite.
+    let ctx2 = store.context(&url, &a.id, req, &app).await.unwrap();
+    assert_eq!(ctx2.rewrite, "cached");
+
+    // Edited digest replaces the chunks; reindex keeps them.
+    let d = store
+        .save_digest(
+            &url,
+            &a.id,
+            &doc.id,
+            "## Overview\nEdited.\n\n## Facts\n- One\n\n## More\n- Two",
+        )
+        .await
+        .unwrap();
+    assert_eq!(d.digest.as_ref().unwrap().status, "edited");
+    let after = store.reindex(&url, &a.id, |_| {}).await.unwrap();
+    assert_eq!(
+        after.docs[0].digest.as_ref().unwrap().chunks,
+        d.digest.as_ref().unwrap().chunks
+    );
+    assert!(!store.index_status(&a.id).await.unwrap().stale);
+
+    // A missing chat model: the digest fails, the document stays indexed and
+    // the previous digest is kept.
+    let job_missing = digest::DigestJob {
+        model: "missing",
+        num_ctx: 8192,
+        cancelled: &never,
+    };
+    let mut errs = Vec::new();
+    store
+        .digest_documents(
+            &url,
+            &a.id,
+            Some(&doc.id),
+            true,
+            &job_missing,
+            |_| {},
+            |_, _, r| errs.push(r.is_err()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(errs, vec![true]);
+    let a3 = store.get(&a.id).unwrap().unwrap();
+    assert_eq!(a3.docs[0].digest.as_ref().unwrap().status, "edited");
+    // Cancelled before any work: nothing is digested.
+    let yes = || true;
+    let job_cancel = digest::DigestJob {
+        model: "m",
+        num_ctx: 8192,
+        cancelled: &yes,
+    };
+    let mut calls = 0;
+    store
+        .digest_documents(
+            &url,
+            &a.id,
+            None,
+            true,
+            &job_cancel,
+            |_| {},
+            |_, _, _| calls += 1,
+        )
+        .await
+        .unwrap();
+    assert_eq!(calls, 0);
+
+    // Clearing the digest removes its chunks; deleting the doc removes files.
+    store.save_digest(&url, &a.id, &doc.id, "  ").await.unwrap();
+    assert_eq!(store.index_status(&a.id).await.unwrap().digest_chunks, 0);
+    store
+        .save_digest(&url, &a.id, &doc.id, "## X\nY")
+        .await
+        .unwrap();
+    store.remove_document(&a.id, &doc.id).await.unwrap();
+    assert!(store.digest_text(&a.id, &doc.id).unwrap().is_none());
+    assert_eq!(store.index_status(&a.id).await.unwrap().chunks, 0);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn old_assistants_load_with_deep_off_and_digest_failure_is_recorded() {
+    let url = fake_ollama().await;
+    let (store, dir) = temp_store(reqwest::Client::new());
+    // An assistant.json written by v2.1.1 (no deep fields).
+    let id = "old1";
+    std::fs::create_dir_all(dir.join(id).join("docs")).unwrap();
+    std::fs::write(
+        dir.join(id).join("assistant.json"),
+        r#"{"id":"old1","name":"Old","strict":true,"embed_model":"bge-m3","docs":[]}"#,
+    )
+    .unwrap();
+    let a = store.get(id).unwrap().unwrap();
+    assert!(!a.deep && a.num_ctx.is_none() && a.think.is_none());
+    let a = store
+        .update(
+            id,
+            serde_json::from_value(json!({ "deep": true, "num_ctx": 999999, "think": false }))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(a.deep);
+    assert_eq!(a.num_ctx, Some(deep::MAX_NUM_CTX));
+    assert_eq!(a.think, Some(false));
+    let a = store
+        .update(
+            id,
+            serde_json::from_value(json!({ "num_ctx": null, "think": null })).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(a.num_ctx.is_none() && a.think.is_none());
+
+    let doc = store
+        .add_document(
+            &url,
+            id,
+            "n",
+            DocInput::Note("Some note text about parking.".into()),
+            |_| {},
+        )
+        .await
+        .unwrap();
+    let never = || false;
+    let job = digest::DigestJob {
+        model: "missing",
+        num_ctx: 8192,
+        cancelled: &never,
+    };
+    let mut errs = Vec::new();
+    store
+        .digest_documents(
+            &url,
+            id,
+            None,
+            false,
+            &job,
+            |_| {},
+            |_, _, r| errs.push(format!("{:#}", r.unwrap_err())),
+        )
+        .await
+        .unwrap();
+    assert!(errs[0].contains("not installed"), "{errs:?}");
+    let a = store.get(id).unwrap().unwrap();
+    let g = a.docs[0].digest.as_ref().unwrap();
+    assert_eq!(g.status, "failed");
+    assert!(g.error.as_deref().unwrap().contains("not installed"));
+    // A failed digest doesn't make the index stale and search still works.
+    assert!(!store.index_status(id).await.unwrap().stale);
+    let r = store.search(&url, id, "parking note", None).await.unwrap();
+    assert_eq!(r[0].doc_id, doc.id);
     let _ = std::fs::remove_dir_all(dir);
 }

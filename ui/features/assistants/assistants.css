@@ -95,6 +95,57 @@
 .asst-del { color: var(--danger); }
 .asst-del:hover:not(:disabled) { border-color: var(--danger); }
 
+/* ---------- deep understanding (v2.2) ---------- */
+.asst-deep { display: flex; flex-direction: column; gap: 2px; }
+.asst-deep-help { margin: 0; margin-inline-start: 28px; font-size: 12.5px; line-height: 1.6; }
+.asst-advanced > summary { cursor: pointer; font-size: 13px; color: var(--muted); padding-block: 2px; }
+.asst-advanced[open] > summary { margin-block-end: 8px; }
+.asst-warn-line { display: flex; align-items: flex-start; gap: 6px; font-size: 12.5px; line-height: 1.5; color: var(--danger); margin-block-start: 6px; }
+.asst-warn-line > span:first-child { display: inline-flex; padding-block-start: 2px; }
+.asst-digest-row {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 13px; padding: 8px 10px; border-radius: 10px;
+  color: var(--text); background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.asst-progress-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.asst-badge {
+  font-size: 11px; font-weight: 500; padding: 1px 7px; border-radius: 999px; white-space: nowrap; flex-shrink: 0;
+  color: var(--muted); background: var(--panel-2); border: 1px solid var(--line);
+}
+.asst-badge.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); border-color: transparent; }
+.asst-badge.failed { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); border-color: transparent; }
+.asst-tabs { display: flex; gap: 4px; border-block-end: 1px solid var(--line); }
+.asst-tab {
+  border: 0; background: none; color: var(--muted); padding: 6px 12px; font-size: 14px; cursor: pointer;
+  border-block-end: 2px solid transparent; margin-block-end: -1px;
+}
+.asst-tab.active { color: var(--text); border-block-end-color: var(--accent); }
+.asst-viewer-pane { display: flex; flex-direction: column; gap: 8px; }
+.asst-viewer-stats { font-size: 13px; }
+.asst-doc-text {
+  margin: 0; max-block-size: 50vh; overflow: auto; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--panel); font-family: inherit; font-size: 13.5px; line-height: 1.7; white-space: pre-wrap;
+  overflow-wrap: anywhere; unicode-bidi: plaintext; text-align: start;
+}
+.asst-digest-text { min-block-size: 280px; font-size: 13.5px; line-height: 1.7; unicode-bidi: plaintext; }
+.asst-pager { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.asst-page-info { font-size: 12px; }
+.asst-test { border-block-start: 1px solid var(--line); padding-block-start: 12px; display: flex; flex-direction: column; gap: 8px; }
+.asst-test > summary { cursor: pointer; font-weight: 600; font-size: 15px; }
+.asst-test[open] { gap: 8px; }
+.asst-test[open] > * + * { margin-block-start: 8px; }
+.asst-test-help { margin: 0; font-size: 12.5px; }
+.asst-test-out { display: flex; flex-direction: column; gap: 12px; }
+.asst-test-turn { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); font-size: 13.5px; }
+.asst-test-q { font-weight: 600; unicode-bidi: plaintext; text-align: start; }
+.asst-test-sec { margin-block-start: 4px; }
+.asst-test-passages { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.asst-test-passages details > summary { cursor: pointer; list-style: none; }
+.asst-test-passages details > summary::-webkit-details-marker { display: none; }
+.asst-test-answer { white-space: pre-wrap; line-height: 1.7; overflow-wrap: anywhere; unicode-bidi: plaintext; text-align: start; }
+.asst-test-think > summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
+.asst-test-think > div { color: var(--muted); white-space: pre-wrap; font-size: 12.5px; max-block-size: 200px; overflow: auto; unicode-bidi: plaintext; text-align: start; }
+.asst-test-times { font-size: 12px; }
+
 /* ---------- sources under a reply ---------- */
 .asst-sources { margin-block: 8px 2px; font-size: 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
 .asst-sources > summary {

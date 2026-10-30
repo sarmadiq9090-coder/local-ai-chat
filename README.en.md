@@ -27,6 +27,16 @@ Available now (v2.1):
   (PDF, text, code) and notes; it retrieves the relevant passages, answers **only**
   from them in strict mode, and shows its sources under each answer.
   Uses a local multilingual embedding model (`bge-m3`).
+  - **Deep understanding** (v2.2, on for new assistants): the chat model reads each
+    document once and writes a structured digest (outline, numbers, conditions),
+    follow-up questions are rewritten into standalone searches, and the model gets
+    the matching passages with their neighbours in a larger context (16k by default).
+    Better answers to broad questions and comparisons; indexing is slower
+    (about a minute per 8 pages on an 8 GB GPU).
+  - Instruction templates (legal, tutor, support, research, HR, technical docs),
+    a "what did it read?" view of each document's extracted text and digest
+    (editable), and a test panel that shows the retrieved passages and the answer.
+  - Scanned PDFs (images without text) can't be read: upload an OCR'd copy.
 - **Auto-update** from GitHub Releases with one click, verified with SHA-256
   (can be turned off in Settings).
 - Streaming answers with stop, copy, regenerate and edit-and-resend.
