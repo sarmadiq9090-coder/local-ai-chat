@@ -18,13 +18,21 @@ server on `127.0.0.1` serves an embedded HTML/JS UI to a native
 
 ## Features
 
-Available now (v2.0):
+Available now (v2.1):
 
 - One portable `.exe`, its own window and icon; only one instance runs at a time.
-- ChatGPT/Claude-style chat UI with full right-to-left Arabic support, plus English.
+- ChatGPT/Claude-style chat UI in **Arabic and English** — switch live in Settings,
+  with correct right-to-left / left-to-right layout everywhere.
+- **Custom assistants with a knowledge base (RAG)** — give an assistant your files
+  (PDF, text, code) and notes; it retrieves the relevant passages, answers **only**
+  from them in strict mode, and shows its sources under each answer.
+  Uses a local multilingual embedding model (`bge-m3`).
+- **Auto-update** from GitHub Releases with one click, verified with SHA-256
+  (can be turned off in Settings).
 - Streaming answers with stop, copy, regenerate and edit-and-resend.
 - Code blocks with syntax highlighting (bundled highlight.js, works offline).
-- Live preview: run HTML/JS code (pages, small games) in a sandboxed side panel.
+- Live preview: run HTML/JS/SVG code (pages, small games) in a sandboxed side panel;
+  console output and runtime errors are captured, with an "ask for a fix" button.
 - Conversations saved on disk, with search, rename and delete.
 - Attach text and source-code files to a message (button or drag & drop).
 - Export a conversation to Markdown.
@@ -33,13 +41,11 @@ Available now (v2.0):
   with a suggested-models catalog rated against your GPU/RAM.
 - Starts Ollama automatically if it is installed but not running.
 
-Planned (see [ROADMAP.md](ROADMAP.md), Arabic, and the specs in [docs/specs/](docs/specs/)):
+- The local server only accepts requests from the app itself (Host/Origin check
+  against other websites and DNS rebinding).
 
-- **Custom assistants with a knowledge base (RAG)** — give an assistant your
-  files and notes; it answers only from them and cites its sources
-  ([spec](docs/specs/assistants.md)).
-- **Auto-update from GitHub Releases** with SHA-256 verification
-  ([spec](docs/specs/auto-update.md)).
+Planned (see [ROADMAP.md](ROADMAP.md), Arabic):
+
 - Tool calling (read/write files and run commands in a project folder, with
   your approval for each step), image input for vision models, prompt
   templates, tray icon and quick-ask window, installer, GPU/memory monitor.
@@ -127,6 +133,7 @@ cargo clippy           # lints
 |---|---|
 | Conversations | `%APPDATA%\LocalAiChat\conversations\` (one JSON file each) |
 | Settings | `%APPDATA%\LocalAiChat\settings.json` |
+| Assistants + knowledge | `%APPDATA%\LocalAiChat\assistants\` |
 | WebView2 profile / cache | `%LOCALAPPDATA%\LocalAiChat\webview\` |
 | Exports | `Documents\LocalAiChat\` |
 | Models | Managed by Ollama (default `%USERPROFILE%\.ollama\models`) |
@@ -142,8 +149,9 @@ models are not affected.
   your network.
 - **No telemetry, analytics, accounts or ads.**
 - The only internet traffic is what you ask for: downloading models (done by
-  Ollama from its registry) and, once the planned auto-update lands, a check
-  of this repository's GitHub Releases (which can be turned off).
+  Ollama from its registry) and the auto-update check against this
+  repository's GitHub Releases (on start and every 6 hours; can be turned off
+  in Settings).
 
 ## Project structure
 
