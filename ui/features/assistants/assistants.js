@@ -13,8 +13,12 @@
 //   and `think` for chat.js. The editor has the deep toggle + advanced options, instruction
 //   templates, a per-document "what did it read?" dialog (extracted text, digest view/edit/
 //   regenerate) and a test panel (retrieval + answer without saving a conversation).
+// - Embedding model picker: catalog of Ollama embedding models (embed-catalog.js) with size, Arabic
+//   support, a verdict for this PC (models/catalog.js rateModel on embed + chat model size) and an
+//   "installed" marker; "Other…" allows any tag; download with progress; re-index offer on change.
 // Cross-feature deps: sidebar (closeMobileSidebar), models (loadModels, toGB, modelInstalled, loadCaps,
-//   supportsThinking), chat (send: suggested questions).
+//   supportsThinking; catalog.js rateModel via embed-catalog.js; its strings rateShort_*, arabic_*,
+//   suggestSize, suggestArabic), chat (send: suggested questions).
 // Events: listens to "current", "models", "language"; emits "current", "focus-composer", "assistants".
 
 import { state, on, emit } from "../../core/state.js";
@@ -26,6 +30,7 @@ import { closeMobileSidebar } from "../sidebar/sidebar.js";
 import { loadModels, toGB, modelInstalled, loadCaps, supportsThinking } from "../models/models.js";
 import { send } from "../chat/chat.js";
 import strings, { NOT_IN_KNOWLEDGE, REPLY_LANGUAGE } from "./strings.js";
+import { EMBED_CATALOG, findEmbed, describeEmbed, rateEmbed, DEFAULT_EMBED } from "./embed-catalog.js";
 
 registerStrings("assistants", strings);
 
@@ -652,6 +657,87 @@ export function openEditor(a) {
     pullBtn.hidden = ok || !m || !!pullCtl;
   };
   embed.addEventListener("input", renderEmbedState);
+
+  // --- embedding model picker (catalog + verdict for this PC) ---
+  const embedSel = el("select", { class: "input asst-embed-select", dir: "ltr" });
+  const embedCard = el("div", { class: "suggest-card asst-embed-card", hidden: true });
+  const embedHw = el("div", { class: "muted asst-embed-hw", hidden: true });
+  const embedWarn = el("div", { class: "asst-warn-line", hidden: true }, el("span", { html: icon("alert", 14) }), el("span", {}));
+  embed.placeholder = t("asst_embedCustomPh");
+  let sysInfo = null;
+  const sameEmbed = (x, y) => String(x || "").trim().replace(/:latest$/, "") === String(y || "").trim().replace(/:latest$/, "");
+  const chatName = () => model.value || state.model || "";
+  const chatGb = () => {
+    const n = chatName();
+    const mm = state.models.find(x => x.name === n || x.name === `${n}:latest`);
+    return mm ? Number(mm.size || 0) / 1024 ** 3 : 0;
+  };
+  const sizeText = gb => (gb < 1 ? `${Math.round(gb * 1000)} MB` : `${gb} GB`); // as ollama.com shows sizes
+  const renderEmbedPicker = () => {
+    const typed = embed.value.trim();
+    const cg = chatGb();
+    embedSel.replaceChildren(
+      ...EMBED_CATALOG.map(m => {
+        const r = rateEmbed(m, sysInfo, cg);
+        return el("option", { value: m.name }, [
+          m.recommended ? `★ ${m.name}` : m.name,
+          sizeText(m.sizeGb),
+          `${t("suggestArabic")}: ${t(`arabic_${m.arabic}`)}`,
+          r?.short,
+          modelInstalled(m.name) ? `✔ ${t("asst_embedInstalled")}` : null,
+        ].filter(Boolean).join(" · "));
+      }),
+      el("option", { value: "" }, t("asst_embedOther")));
+    const cat = findEmbed(typed);
+    embedSel.value = cat ? cat.name : "";
+    if (sysInfo) {
+      const gpu = (sysInfo.gpus || []).filter(g => g.vram_gb).map(g => `${g.name} (${g.vram_gb} GB)`).join(" + ") || t("asst_embedNoGpu");
+      embedHw.hidden = false;
+      embedHw.replaceChildren(t("asst_embedHw", { ram: Math.round(sysInfo.ram_gb || 0) }), " ", el("bdi", { dir: "ltr" }, gpu));
+    }
+    // Explanation card.
+    if (!cat) {
+      embedCard.hidden = !typed;
+      embedCard.className = "suggest-card asst-embed-card";
+      embedCard.replaceChildren(el("p", { class: "suggest-desc" }, t("asst_embedUnknown")));
+    } else {
+      const r = rateEmbed(cat, sysInfo, cg);
+      embedCard.hidden = false;
+      embedCard.className = "suggest-card asst-embed-card" + (r ? ` lvl-${r.level}` : "");
+      const fact = (label, value) => el("span", { class: "suggest-fact" }, el("span", { class: "muted" }, `${label}: `), el("bdi", {}, value));
+      embedCard.replaceChildren(
+        el("div", { class: "suggest-head" },
+          el("span", { class: "model-name", dir: "ltr" }, cat.name),
+          cat.recommended ? el("span", { class: "asst-badge ok" }, t("asst_embedRecommended")) : null,
+          r ? el("span", { class: "suggest-badge" }, r.label) : null),
+        el("p", { class: "suggest-desc" }, describeEmbed(cat)),
+        el("div", { class: "suggest-facts" },
+          fact(t("suggestSize"), sizeText(cat.sizeGb)),
+          fact(t("suggestArabic"), t(`arabic_${cat.arabic}`)),
+          modelInstalled(cat.name) ? el("span", { class: "suggest-fact" }, `✔ ${t("asst_embedInstalled")}`) : null),
+        r ? el("p", { class: "suggest-reason" }, r.reason) : null,
+        cg ? el("p", { class: "muted asst-embed-note" }, t("asst_embedWithChat", { chat: chatName(), gb: (Math.round(cg * 10) / 10).toString() })) : null);
+    }
+    // Changing the model of an assistant that has documents needs a full re-index.
+    const n = current?.docs?.length || 0;
+    embedWarn.hidden = !n || !typed || sameEmbed(typed, current?.embed_model);
+    embedWarn.lastElementChild.textContent = t("asst_embedReindexWarn", { n });
+  };
+  embedSel.addEventListener("change", () => {
+    if (embedSel.value) {
+      embed.value = embedSel.value;
+      embed.hidden = true;
+    } else {
+      embed.hidden = false;
+      if (findEmbed(embed.value)) embed.value = "";
+      embed.focus();
+    }
+    renderEmbedState();
+    renderEmbedPicker();
+  });
+  embed.addEventListener("input", renderEmbedPicker);
+  model.addEventListener("change", renderEmbedPicker);
+  api.getSystemInfo().then(info => { sysInfo = info; renderEmbedPicker(); }).catch(() => {});
   pullBtn.addEventListener("click", async () => {
     const m = embed.value.trim();
     if (!m || pullCtl) return;
@@ -681,6 +767,9 @@ export function openEditor(a) {
     }
   });
   renderEmbedState();
+  renderEmbedPicker();
+  // The tag box is for "Other…": hidden while a catalog model is picked (typing never hides it).
+  embed.hidden = !!findEmbed(embed.value);
   // In the editor the download button is right here: say so instead of "open the editor".
   const missingMsg = m => t("asst_modelMissingHere", { name: m });
 
@@ -1081,7 +1170,7 @@ export function openEditor(a) {
       instructions: instr.value,
       model: model.value || null,
       strict: strict.checked,
-      embed_model: embed.value.trim() || "bge-m3",
+      embed_model: embed.value.trim() || DEFAULT_EMBED,
       deep: deepIn.checked,
       num_ctx: ctxVal > 0 ? Math.round(ctxVal) : null,
       think: thinkSel.value === "auto" ? null : thinkSel.value === "on",
@@ -1096,13 +1185,20 @@ export function openEditor(a) {
         openEditor(created); // continue with knowledge
         return;
       }
-      const embedChanged = body.embed_model !== current.embed_model;
+      const embedChanged = !sameEmbed(body.embed_model, current.embed_model);
       const deepTurnedOn = body.deep && !current.deep;
       current = { ...current, ...(await call("PUT", `/${enc(current.id)}`, body)) };
       toast(t("asst_saved"), "success");
       await loadAssistants();
-      if (embedChanged && current.docs?.length) await reindex();
-      else await refresh();
+      if (embedChanged && current.docs?.length) {
+        // The old index can't be searched with another embedding model: offer the re-index now
+        // (declining leaves the "re-index" banner).
+        const ok = await confirmDialog(t("asst_embedReindexAsk", { n: current.docs.length, name: body.embed_model }),
+          { title: t("asst_reindex"), okText: t("asst_reindexNow") });
+        if (ok) await reindex();
+        else await refresh();
+      } else await refresh();
+      renderEmbedPicker();
       // Deep understanding just enabled: offer to digest the existing documents now.
       const missing = missingDigests(current).length;
       if (deepTurnedOn && missing && await confirmDialog(t("asst_deepEnableAsk", { n: missing }), { title: t("asst_deep"), okText: t("asst_digestAll") })) {
@@ -1138,11 +1234,11 @@ export function openEditor(a) {
     field(t("asst_description"), desc),
     field(t("asst_template"), tplSel),
     field(t("asst_instructions"), instr),
-    el("div", { class: "field-row" },
-      field(t("asst_model"), model),
-      el("label", { class: "field" },
-        el("span", { class: "field-label" }, t("asst_embedModel"), " ", embedState),
-        el("div", { class: "asst-embed-row" }, embed, pullBtn))),
+    field(t("asst_model"), model),
+    el("div", { class: "field asst-embed-field" },
+      el("label", { class: "field-label" }, t("asst_embedModel"), " ", embedState),
+      el("div", { class: "asst-embed-row" }, embedSel, pullBtn),
+      embed, embedHw, embedCard, embedWarn),
     pullBox,
     el("label", { class: "asst-toggle" }, strict, el("span", {}, t("asst_strict"))),
     el("div", { class: "asst-deep" },
@@ -1151,7 +1247,7 @@ export function openEditor(a) {
     advanced,
     isNew ? saveFirst : knowledge,
     isNew ? null : testBox);
-  body.addEventListener("models", () => { fillModels(); renderEmbedState(); });
+  body.addEventListener("models", () => { fillModels(); renderEmbedState(); renderEmbedPicker(); });
 
   // The assistant's name is user text: isolate it so "Edit: <Arabic name>" keeps its order.
   const title = isNew ? t("asst_editorNew") : el("span", { dir: document.documentElement.dir || "rtl" }, withName("asst_editorEdit", a.name));

@@ -356,7 +356,7 @@ pub fn fix_arabic_pdf(raw: &str) -> (String, Option<&'static str>) {
             let has_arabic = line.chars().any(is_arabic);
             if has_arabic && (visual_doc || line.chars().any(is_presentation_form)) {
                 fixed_lines += 1;
-                fix_visual_line(&line)
+                join_split_digits(&fix_visual_line(&line))
             } else {
                 line
             }
@@ -365,6 +365,32 @@ pub fn fix_arabic_pdf(raw: &str) -> (String, Option<&'static str>) {
     let letters = raw.chars().filter(|c| c.is_alphanumeric()).count().max(1);
     let warning = (fixed_lines > 0 || lost * 100 > letters).then_some(WARN_ARABIC_PDF);
     (lines.join("\n"), warning)
+}
+
+/// Glyph-positioned Arabic PDFs (e.g. printed by Edge/Chrome) come out with
+/// a space between the digits of a number («2 0 2 5», «%2 0», «8 :0 0»).
+/// Re-join a token that is a single digit (optionally followed by
+/// punctuation) onto a previous token ending in a digit, and `N :MM` times.
+pub fn join_split_digits(line: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    for tok in line.split(' ') {
+        let single_digit = {
+            let mut cs = tok.chars();
+            cs.next().is_some_and(|c| c.is_ascii_digit()) && cs.all(|c| !c.is_alphanumeric())
+        };
+        let time_part = tok.starts_with(':') && tok[1..].starts_with(|c: char| c.is_ascii_digit());
+        if let Some(prev) = out.last_mut()
+            && prev.ends_with(|c: char| c.is_ascii_digit())
+            && !prev.ends_with(|c: char| !c.is_ascii_digit())
+            && (single_digit && !prev.contains(['.', ',', '،'])
+                || time_part && prev.chars().all(|c| c.is_ascii_digit()))
+        {
+            prev.push_str(tok);
+            continue;
+        }
+        out.push(tok.to_string());
+    }
+    out.join(" ")
 }
 
 /// `pdf-extract` often separates *every* line with a blank line, which would
@@ -435,6 +461,23 @@ pub fn normalize(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn split_digits_are_rejoined() {
+        assert_eq!(
+            join_split_digits("تاريخ السريان: 1 يناير 2 0 2 5 — في 1 5 ديسمبر"),
+            "تاريخ السريان: 1 يناير 2025 — في 15 ديسمبر"
+        );
+        assert_eq!(join_split_digits("بنسبة %2 0 للموظف"), "بنسبة %20 للموظف");
+        assert_eq!(
+            join_split_digits("الساعة 8 :0 0 صباحًا"),
+            "الساعة 8:00 صباحًا"
+        );
+        assert_eq!(join_split_digits("مدتها 4 5 دقيقة."), "مدتها 45 دقيقة.");
+        // Ordinary numbers and lists are left alone.
+        assert_eq!(join_split_digits("30 يومًا و 60 يومًا"), "30 يومًا و 60 يومًا");
+        assert_eq!(join_split_digits("الإصدار 2.1 3"), "الإصدار 2.1 3");
+    }
 
     #[test]
     fn heh_doachashmee_becomes_arabic_heh() {

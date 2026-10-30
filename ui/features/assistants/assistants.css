@@ -146,6 +146,14 @@
 .asst-test-think > div { color: var(--muted); white-space: pre-wrap; font-size: 12.5px; max-block-size: 200px; overflow: auto; unicode-bidi: plaintext; text-align: start; }
 .asst-test-times { font-size: 12px; }
 
+/* ---------- embedding model picker ---------- */
+.asst-embed-field { display: flex; flex-direction: column; gap: 6px; }
+.asst-embed-select { flex: 1; min-width: 0; }
+.asst-embed-hw { font-size: 12.5px; }
+.asst-embed-card { margin: 0; }
+.asst-embed-card .suggest-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.asst-embed-note { margin: 4px 0 0; font-size: 12px; }
+
 /* ---------- sources under a reply ---------- */
 .asst-sources { margin-block: 8px 2px; font-size: 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
 .asst-sources > summary {

@@ -95,3 +95,19 @@ Top-k chunks answer direct lookups but not questions that need the whole documen
 - **Editor**: deep toggle + advanced (`num_ctx`, thinking auto/on/off; warning above 16k: an 8B model may not fit 8 GB VRAM), instruction templates (legal, tutor, support, research, HR, technical docs — ar/en, `GET /templates`), per-document "what did it read?" dialog (pages/chars/chunks/warnings, paged extracted text, digest view/edit/regenerate with progress + cancel), digest badges and "write digests" for missing ones, and a test panel (rewritten query, passages with scores and digest/expansion badges, streamed answer, timings; nothing saved).
 - **Extraction**: PDFs record `pages`; a PDF with < 80 chars of text per page gets `warning: "scanned_pdf"` (no OCR; the UI suggests an OCR'd copy); one with no text at all fails with that hint.
 - Compatibility: no index version bump — `IndexedChunk.kind` is optional, old assistants load with `deep: false`; `bge-m3` and `bge-m3:latest` count as the same embed model.
+
+## Embedding model picker (v2.2)
+
+User request: *"the embedding model must be a dropdown list where I choose from the models, showing whether each is compatible with my PC."* The editor's embed field is a `<select>` over `ui/features/assistants/embed-catalog.js` (exact Ollama tags + download sizes from ollama.com/library): `bge-m3` (★ recommended, strong Arabic), `qwen3-embedding:0.6b/4b/8b` (good Arabic), `snowflake-arctic-embed2`, `granite-embedding:278m`, `embeddinggemma` (fair Arabic), `nomic-embed-text`, `mxbai-embed-large`, `all-minilm` (weak Arabic). Each option shows name · size · Arabic support · verdict for this PC · installed; the verdict is the models feature's `rateModel()` (`/api/app/system`) applied to embed size **plus the assistant's chat model size**, since both run for every question. A card below explains the pick (what it's good at, the verdict reason). "Other…" reveals a free-text tag box (unknown tags are not rated). A missing model shows the Download button (pull with progress). Changing the embed model of an assistant with documents shows a warning and, on save, asks to re-index now (declining leaves the stale banner).
+
+## Deep-mode eval (v2.2, RTX 2070 8 GB, qwen3:8b, bge-m3, strict)
+
+6-page Arabic employee handbook PDF + 5-page English purifier manual PDF (printed by Edge), 15 questions (facts, numbers, comparison, overview, conditions, cross-lingual, a follow-up, 3 unanswerable). C/P/W = correct/partial/wrong; no hallucinated answer to an unanswerable question in any mode.
+
+| mode | C | P | W | refusals on the 3 unanswerable | median answer time |
+|---|---|---|---|---|---|
+| deep off (k 5, num_ctx 8192, no thinking) | 5 | 3 | 7 | 3/3 | 5.2 s |
+| deep on, thinking off (num_ctx 16384) | 9 | 3 | 3 | 3/3 | 17 s |
+| deep on, thinking on (default) | 8 | 4 | 3 | 3/3 | 25 s |
+
+Indexing: ~1 s per PDF without digests; with digests 94 s (Arabic, 4.7k chars) and 37 s (English, 5.2k chars). The remaining wrong answers come from the Arabic PDF's allowance/end-of-service tables, whose cells `pdf-extract` merges and reorders (the document carries the `arabic_pdf_quality` warning) — a .txt/.docx copy avoids it. Retrieval takes ~3.5 s per turn because Ollama swaps `bge-m3` and the chat model on an 8 GB card.

@@ -193,6 +193,16 @@ export default {
       "- أجب إجابة كاملة ودقيقة، وانقل الأرقام والتواريخ والأسماء حرفيًا كما وردت.\n" +
       "- إذا لم تكن الإجابة في المصادر فيمكنك الإجابة من معرفتك العامة، مع التنبيه إلى أنها ليست من المعرفة المعطاة.\n" +
       "- أجب بلغة سؤال المستخدم.",
+    // ---- embedding model picker ----
+    asst_embedOther: "موديل آخر… (اكتب اسمه)",
+    asst_embedCustomPh: "اسم موديل الفهرسة كما في Ollama، مثل bge-m3",
+    asst_embedRecommended: "موصى به",
+    asst_embedUnknown: "هذا الموديل ليس في القائمة المقترحة، لذلك لا نستطيع تقييم مناسبته لجهازك أو لدعم العربية. تأكد أنه موديل فهرسة (embedding).",
+    asst_embedWithChat: "التقييم يحسب حجمه مع موديل المحادثة ⁦{chat} ({gb} GB)⁩ لأنهما يعملان معًا عند كل سؤال.",
+    asst_embedHw: "جهازك: ذاكرة ⁦{ram} GB⁩ ·",
+    asst_embedNoGpu: "بلا كرت شاشة منفصل",
+    asst_embedReindexWarn: "تغيير موديل الفهرسة يتطلب إعادة فهرسة كل المستندات ({n}) عند الحفظ.",
+    asst_embedReindexAsk: "غيّرت موديل الفهرسة إلى {name}. يجب إعادة فهرسة المستندات ({n}) قبل أن يبحث المساعد فيها. أعيد الفهرسة الآن؟",
   },
   en: {
     asst_section: "Assistants",
@@ -372,6 +382,16 @@ export default {
       "- Answer completely and precisely, copying numbers, dates and names exactly as written.\n" +
       "- If the answer isn't in the sources you may answer from general knowledge, but say it isn't from the given knowledge.\n" +
       "- Reply in the language of the user's question.",
+    // ---- embedding model picker ----
+    asst_embedOther: "Other model… (type its name)",
+    asst_embedCustomPh: "Embedding model tag as in Ollama, e.g. bge-m3",
+    asst_embedRecommended: "Recommended",
+    asst_embedUnknown: "This model isn't in the suggested list, so we can't rate it for your computer or for Arabic. Make sure it is an embedding model.",
+    asst_embedWithChat: "The rating counts it together with the chat model ⁦{chat} ({gb} GB)⁩, because both run for every question.",
+    asst_embedHw: "Your computer: {ram} GB RAM ·",
+    asst_embedNoGpu: "no discrete graphics card",
+    asst_embedReindexWarn: "Changing the embedding model requires re-indexing all documents ({n}) when you save.",
+    asst_embedReindexAsk: "You changed the embedding model to {name}. The documents ({n}) must be re-indexed before the assistant can search them. Re-index now?",
   },
 };
 
