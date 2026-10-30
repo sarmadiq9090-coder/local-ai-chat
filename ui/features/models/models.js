@@ -4,6 +4,10 @@
 //  * the model manager modal (list / delete / download with progress),
 //  * hardware-aware download suggestions (catalog.js + /api/app/system).
 // Emits "model" when the selection changes and "models" when the list reloads.
+// Embedding-only models (capabilities from /api/ollama/tags, name heuristic as a
+// fallback) are never auto-selected nor offered in the chat picker; the manager
+// lists them with an "embedding" tag. clearModels() empties/disables the picker
+// while Ollama is down (called by the status feature).
 // Esc: closes the model dropdown. The installed list is first loaded by the
 // status feature once Ollama is reachable.
 // Cross-feature deps: settings (saveSettings).
@@ -22,6 +26,30 @@ registerStrings("models", strings);
 /** Bytes → "4.7" (GB, one decimal). Pure. */
 export const toGB = bytes => (Number(bytes || 0) / 1024 ** 3).toFixed(1);
 
+/** Bytes → "4.7 GB", or "45 MB" below 0.1 GB (so small models don't show "0.0 GB"). Pure. */
+export function fmtSize(bytes) {
+  const n = Number(bytes || 0);
+  if (n >= 0.1 * 1024 ** 3) return `${toGB(n)} GB`;
+  return `${Math.max(n > 0 ? 1 : 0, Math.round(n / 1024 ** 2))} MB`;
+}
+
+const EMBED_NAME = /embed|bge|minilm|nomic|e5-/i; // same heuristic as features/assistants
+
+/**
+ * Can `m` (a /api/ollama/tags entry, or a name) chat? Uses `capabilities` when Ollama
+ * reports them (embedding-only = has "embedding" but not "completion"), else the name.
+ */
+export function isChatModel(m) {
+  const name = typeof m === "string" ? m : m?.name || "";
+  const caps = (typeof m === "object" && Array.isArray(m?.capabilities) && m.capabilities.length)
+    ? m.capabilities : state.caps[name];
+  if (Array.isArray(caps) && caps.length) return caps.includes("completion") || !caps.includes("embedding");
+  return !EMBED_NAME.test(name);
+}
+
+/** Installed models that can chat (what the top-bar picker offers). */
+export const chatModels = () => state.models.filter(isChatModel);
+
 /** Does the given model support Ollama's `think` option? (needs loadCaps(name) first) */
 export const supportsThinking = name => (state.caps[name] || []).includes("thinking");
 
@@ -38,6 +66,7 @@ export async function loadCaps(name) {
 }
 
 let menuOpen = false;
+let lastModel = null; // selection before clearModels(), restored when Ollama comes back
 
 export function initModels() {
   $("#modelBtn").addEventListener("click", e => { e.stopPropagation(); toggleModelMenu(); });
@@ -52,20 +81,54 @@ export function initModels() {
   on("language", () => { closeModelMenu(); renderModelButton(); updateThinkToggle(); });
 }
 
-/** Fetch installed models, rebuild the picker and pick settings.default_model. */
+/**
+ * Fetch installed models, rebuild the picker and pick the active chat model:
+ * the current one, else settings.default_model, else the best-rated installed
+ * catalog model, else the first chat-capable one. Never an embedding-only model.
+ */
 export async function loadModels() {
   try {
     const j = await api.listModels();
     state.models = (j?.models || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+    // /api/tags already reports capabilities on recent Ollama: no extra /api/show needed.
+    for (const m of state.models) if (Array.isArray(m.capabilities) && m.capabilities.length) state.caps[m.name] = m.capabilities;
   } catch (e) {
     state.models = [];
     console.warn("model list failed", e);
   }
-  const names = state.models.map(m => m.name);
-  const preferred = [state.model, state.settings?.default_model].find(n => n && names.includes(n));
-  await selectModel(preferred || names[0] || null, false);
-  if (!names.length) setStatus(t("noModels"), "err");
+  $("#modelBtn").disabled = false;
+  const names = chatModels().map(m => m.name);
+  const preferred = [state.model, lastModel, state.settings?.default_model].find(n => n && names.includes(n));
+  lastModel = null;
+  await selectModel(preferred || await bestDefault(names) || null, false);
+  if (!state.models.length) setStatus(t("noModels"), "err");
+  else if (!names.length) setStatus(t("noChatModels"), "err");
   emit("models");
+}
+
+/** Empty and disable the picker (Ollama is down); loadModels() restores the selection. */
+export function clearModels() {
+  if (state.model) lastModel = state.model;
+  closeModelMenu();
+  state.models = [];
+  state.model = null;
+  $("#modelBtn").disabled = true;
+  renderModelButton();
+  updateThinkToggle();
+  emit("model", null);
+  emit("models");
+}
+
+/** Best installed catalog model for this computer (best rating, chat category first), else names[0]. */
+async function bestDefault(names) {
+  if (!names.length) return null;
+  if (!systemInfo) systemInfo = await api.getSystemInfo().catch(() => null);
+  const ranked = CATALOG
+    .map((m, i) => ({ m, i, inst: names.find(n => n === m.name || n === `${m.name}:latest`) }))
+    .filter(x => x.inst)
+    .sort((a, b) => levelRank(rateModel(a.m, systemInfo)) - levelRank(rateModel(b.m, systemInfo))
+      || (a.m.category !== "chat") - (b.m.category !== "chat") || a.i - b.i);
+  return ranked[0]?.inst || names[0];
 }
 
 /** Make `name` the active model; optionally remember it as default_model. */
@@ -81,7 +144,9 @@ export async function selectModel(name, remember = true) {
 }
 
 function renderModelButton() {
-  $("#modelName").textContent = state.model || t("noModels");
+  const none = $("#modelBtn").disabled ? t("modelsUnavailable")
+    : state.models.length && !chatModels().length ? t("noChatModel") : t("noModels");
+  $("#modelName").textContent = state.model || none;
 }
 
 function updateThinkToggle() {
@@ -100,7 +165,7 @@ function toggleModelMenu() { menuOpen ? closeModelMenu() : openModelMenu(); }
 
 function openModelMenu() {
   const list = $("#modelList");
-  const items = state.models.map(m => el("button", {
+  const items = chatModels().map(m => el("button", {
     type: "button",
     class: "dd-item" + (m.name === state.model ? " active" : ""),
     role: "menuitemradio",
@@ -108,11 +173,11 @@ function openModelMenu() {
     onclick: () => { closeModelMenu(); selectModel(m.name); },
   },
   el("span", { class: "dd-name", dir: "ltr" }, m.name),
-  el("span", { class: "dd-meta", dir: "ltr" }, `${toGB(m.size)} GB`),
+  el("span", { class: "dd-meta", dir: "ltr" }, fmtSize(m.size)),
   el("span", { class: "dd-check", html: m.name === state.model ? icon("check", 16) : "" })));
 
   list.replaceChildren(
-    ...(items.length ? items : [el("div", { class: "dd-empty" }, t("noModels"))]),
+    ...(items.length ? items : [el("div", { class: "dd-empty" }, state.models.length ? t("noChatModels") : t("noModels"))]),
     el("div", { class: "dd-sep" }),
     el("button", { type: "button", class: "dd-item", onclick: () => { closeModelMenu(); openModelManager(); } },
       el("span", { class: "dd-icon", html: icon("cube", 16) }), el("span", { class: "dd-name" }, t("manageModels"))));
@@ -140,10 +205,11 @@ export function openModelManager() {
     if (!state.models.length) { rows.replaceChildren(el("p", { class: "muted" }, t("noModels"))); return; }
     rows.replaceChildren(...state.models.map(m => {
       const d = m.details || {};
-      const meta = [d.parameter_size, d.quantization_level, `${toGB(m.size)} GB`].filter(Boolean).join(" · ");
+      const meta = [d.parameter_size, d.quantization_level, fmtSize(m.size)].filter(Boolean).join(" · ");
       return el("div", { class: "model-row" },
         el("div", { class: "model-info" },
-          el("div", { class: "model-name", dir: "ltr" }, m.name),
+          el("div", { class: "model-name", dir: "ltr" }, m.name,
+            !isChatModel(m) && el("span", { class: "model-tag", title: t("embedModelHint") }, t("embedModelTag"))),
           el("div", { class: "model-meta", dir: "ltr" }, meta)),
         iconButton("trash", t("delete"), () => removeModel(m.name), "icon-btn danger"));
     }));
@@ -168,8 +234,13 @@ export function openModelManager() {
   const pullBtn = el("button", { class: "btn primary", type: "button", html: icon("download", 16) }, t("download"));
   const bar = el("div", { class: "progress-bar" });
   const progress = el("div", { class: "progress", hidden: true }, bar);
-  const pullStatus = el("div", { class: "pull-status muted", dir: "ltr" });
-  const cancelPull = el("button", { class: "btn", type: "button", hidden: true, onclick: () => pullCtl?.abort() }, t("cancel"));
+  const pullStatus = el("div", { class: "pull-status muted", dir: "auto" });
+  const pullError = el("div", { class: "pull-error", dir: "auto", hidden: true });
+  // Same confirmation for the Cancel button and for closing the dialog mid-download.
+  const confirmStopPull = () => confirmDialog(t("cancelDownloadConfirm"),
+    { title: t("cancelDownloadTitle"), okText: t("stopDownload"), cancelText: t("keepDownloading"), danger: true });
+  const cancelPull = el("button", { class: "btn", type: "button", hidden: true,
+    onclick: async () => { if (pullCtl && await confirmStopPull()) pullCtl?.abort(); } }, t("cancel"));
   const suggestions = suggestionPicker(nameInput);
 
   const setPulling = on => {
@@ -187,14 +258,15 @@ export function openModelManager() {
     setPulling(true);
     bar.style.width = "0%";
     pullStatus.textContent = t("downloading");
+    pullError.hidden = true;
     try {
       for await (const p of api.pullModel(name, pullCtl.signal)) {
-        let text = p.status || "";
+        let text = pullStatusText(p.status);
         if (p.total) {
           const done = p.completed || 0;
           const pct = Math.min(100, (done / p.total) * 100);
           bar.style.width = pct.toFixed(1) + "%";
-          text += ` — ${toGB(done)} / ${toGB(p.total)} GB (${pct.toFixed(0)}%)`;
+          text += ` — \u2066${fmtSize(done)} / ${fmtSize(p.total)} (${pct.toFixed(0)}%)\u2069`;
         }
         pullStatus.textContent = text;
       }
@@ -204,9 +276,16 @@ export function openModelManager() {
       await loadModels();
       renderRows();
     } catch (e) {
-      if (e.name === "AbortError") toast(t("downloadCanceled"));
-      else toast(t("downloadFailed", { error: e.message }), "error");
       pullStatus.textContent = "";
+      if (e.name === "AbortError") toast(t("downloadCanceled"));
+      else {
+        const msg = pullErrorText(e.message);
+        toast(t("downloadFailed", { error: msg }), "error");
+        // Localized explanation, with Ollama's raw message in small print.
+        pullError.replaceChildren(el("div", {}, t("downloadFailed", { error: msg })),
+          msg !== e.message && el("small", { class: "muted", dir: "ltr" }, e.message));
+        pullError.hidden = false;
+      }
     } finally {
       pullCtl = null;
       setPulling(false);
@@ -227,10 +306,11 @@ export function openModelManager() {
       suggestions.node,
       el("div", { class: "pull-row" }, nameInput, pullBtn, cancelPull),
       progress,
-      pullStatus),
+      pullStatus,
+      pullError),
     beforeClose: () => {
       if (!pullCtl) return true;
-      confirmDialog(t("cancelDownloadConfirm"), { danger: true }).then(ok => {
+      confirmStopPull().then(ok => {
         if (ok) { pullCtl?.abort(); m.close(true); }
       });
       return false;
@@ -238,6 +318,30 @@ export function openModelManager() {
   });
   renderRows();
   loadModels().then(renderRows);
+}
+
+// ---------- pull status / errors ----------
+const PULL_STATUS = [
+  [/^pulling manifest$/i, "pull_manifest"],
+  [/^(pulling [0-9a-f]{6,}|downloading)/i, "pull_downloading"],
+  [/^verifying (sha256 )?digest$/i, "pull_verifying"],
+  [/^writing manifest$/i, "pull_writing"],
+  [/^removing (any )?unused layers$/i, "pull_cleanup"],
+  [/^success$/i, "pull_success"],
+];
+
+/** Ollama pull status → localized text; unknown statuses are shown as-is. */
+export function pullStatusText(status) {
+  const s = String(status || "").trim();
+  const hit = PULL_STATUS.find(([re]) => re.test(s));
+  return hit ? t(hit[1]) : s;
+}
+
+/** Known Ollama pull errors → localized message; others unchanged. */
+export function pullErrorText(message) {
+  const m = String(message || "");
+  if (/file does not exist|manifest unknown|not found/i.test(m)) return t("pull_notFound");
+  return m;
 }
 
 // ---------- download suggestions ----------

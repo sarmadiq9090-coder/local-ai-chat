@@ -3,6 +3,10 @@
 // temperature, context length, theme, Ollama URL). Emits "settings" after every change and "ollama-url-changed"
 // when the Ollama address is edited. Owns the sidebar "settings" button.
 // Other features wait for `settingsLoaded` before using state.settings at startup.
+// "settings-open" payload: { form, draft, contribute(fn) } — a feature may append a section to
+// `form`, read its initial values from `draft`, and register fn() → partial settings patch that is
+// saved with the dialog's Save (and kept as the draft across a live language rebuild); Cancel drops it.
+// Writes localStorage "ui.theme" (read by core/boot.js before first paint) whenever the saved theme changes.
 
 import { state, emit } from "../../core/state.js";
 import * as api from "../../core/api.js";
@@ -47,6 +51,12 @@ export function applyTheme(theme) {
   document.documentElement.dataset.theme = resolved;
 }
 
+const THEME_KEY = "ui.theme"; // read by core/boot.js before first paint
+/** Persist the saved (not previewed) theme for the next startup. */
+function rememberTheme(theme) {
+  try { localStorage.setItem(THEME_KEY, theme || "dark"); } catch { /* storage unavailable */ }
+}
+
 darkQuery?.addEventListener?.("change", () => {
   if (state.settings?.theme === "system") applyTheme("system");
 });
@@ -74,6 +84,7 @@ export async function loadSettings() {
   try { s = await fetchSettings(); } catch (e) { loadedFromServer = false; console.warn("settings load failed", e); }
   state.settings = { ...DEFAULT_SETTINGS, ...s };
   applyTheme(state.settings.theme);
+  if (loadedFromServer) rememberTheme(state.settings.theme);
   setLanguage(state.settings.language);
   emit("settings");
   markLoaded();
@@ -101,6 +112,7 @@ export async function saveSettings(patch) {
   try {
     const saved = await request;
     if (saved && typeof saved === "object") state.settings = { ...DEFAULT_SETTINGS, ...saved };
+    rememberTheme(state.settings.theme);
   } catch (e) {
     toast(t("settingsSaveFailed", { error: e.message }), "error");
     throw e;
@@ -114,8 +126,13 @@ export async function saveSettings(patch) {
   return state.settings;
 }
 
-const field = (label, control, extra) =>
-  el("label", { class: "field" }, el("span", { class: "field-label" }, label, extra), control);
+let fieldSeq = 0;
+/** Labelled form row; the label is tied to `control` (or its first form control) via for/id. */
+const field = (label, control, extra) => {
+  const target = control.matches("input, select, textarea") ? control : control.querySelector("input, select, textarea");
+  if (target && !target.id) target.id = `set-field-${++fieldSeq}`;
+  return el("div", { class: "field" }, el("label", { class: "field-label", for: target?.id }, label, extra), control);
+};
 
 /**
  * Open the settings dialog. `draft` (unsaved field values) is used when the
@@ -150,10 +167,16 @@ export function openSettings(draft) {
   const language = el("select", { class: "input" },
     LANGUAGES.map(([code, name]) => el("option", { value: code, lang: code, dir: code === "ar" ? "rtl" : "ltr" }, name)));
   language.value = getLanguage();
+  // Sections added by other features (see "settings-open"): each returns a partial patch.
+  const contributors = [];
+  const contributed = () => Object.assign({}, ...contributors.map(fn => { try { return fn() || {}; } catch { return {}; } }));
+
   // Live switch: apply the language, then rebuild the dialog in it, keeping unsaved edits.
   language.addEventListener("change", () => {
     const next = language.value;
     const values = {
+      ...(draft || {}),
+      ...contributed(),
       system_prompt: promptForLanguage(prompt.value, next),
       temperature: Number(temp.value),
       num_ctx: Number(ctx.value),
@@ -176,6 +199,7 @@ export function openSettings(draft) {
     saveBtn.disabled = true;
     try {
       await saveSettings({
+        ...contributed(),
         system_prompt: prompt.value,
         temperature: Number(temp.value),
         num_ctx: Number(ctx.value),
@@ -215,7 +239,8 @@ export function openSettings(draft) {
       setLanguage(state.settings?.language);
     },
   });
-  emit("settings-open", m.body.firstChild); // other features may append a section to the form (e.g. update)
+  // Other features may append a section to the form (e.g. update) and add to the draft.
+  emit("settings-open", { form: m.body.firstChild, draft: s, contribute: fn => contributors.push(fn) });
 }
 
 export default {

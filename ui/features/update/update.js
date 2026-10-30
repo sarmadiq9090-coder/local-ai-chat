@@ -6,8 +6,9 @@
 //   (version, date, release notes, "Update now" with an NDJSON progress bar).
 // - Settings integration: listens for the "settings-open" event (emitted by
 //   features/settings with the settings form) and appends an "Updates" section
-//   (auto-check toggle, saved immediately; "Check for updates" button).
-// Cross-feature deps: settings (settingsLoaded, saveSettings), core/api (getUpdateInfo, installUpdate).
+//   (auto-check toggle — part of the dialog draft: saved on Save, dropped on Cancel;
+//   "Check for updates" button whose result stays visible across dialog rebuilds).
+// Cross-feature deps: settings (settingsLoaded, "settings-open" draft protocol), core/api (getUpdateInfo, installUpdate).
 
 import { state, on } from "../../core/state.js";
 import * as api from "../../core/api.js";
@@ -15,7 +16,7 @@ import { $, el, openModal, toast } from "../../core/dom.js";
 import { t, registerStrings, getLanguage } from "../../core/i18n.js";
 import { icon } from "../../core/icons.js";
 import { renderMarkdown } from "../../core/markdown.js";
-import { settingsLoaded, saveSettings } from "../settings/settings.js";
+import { settingsLoaded } from "../settings/settings.js";
 import strings from "./strings.js";
 
 registerStrings("update", strings);
@@ -25,6 +26,7 @@ const RECHECK_MS = 6 * 60 * 60 * 1000;
 let info = null;        // last /update/check response
 let button = null;      // sidebar footer button
 let installing = false;
+let manualChecked = false; // the user pressed "Check for updates": keep showing the result
 
 /** Ask the backend (it caches for 10 min unless `force`). Never throws. */
 export async function checkForUpdates({ force = false } = {}) {
@@ -137,17 +139,15 @@ async function reloadWhenBack() {
 }
 
 /** "Updates" section appended to the settings form (see features/settings "settings-open"). */
-export function renderSettingsSection(form) {
+export function renderSettingsSection({ form, draft, contribute } = {}) {
   if (!form) return;
-  const auto = el("input", { type: "checkbox" });
-  auto.checked = state.settings?.auto_update !== false;
-  auto.addEventListener("change", async () => {
-    try {
-      await saveSettings({ auto_update: auto.checked });
-      if (auto.checked) checkForUpdates();
-    } catch {
-      auto.checked = !auto.checked;
-    }
+  const auto = el("input", { type: "checkbox", id: "upd-auto", "aria-label": t("upd_auto") });
+  auto.checked = (draft ?? state.settings)?.auto_update !== false;
+  const wasOn = state.settings?.auto_update !== false;
+  // Saved with the dialog's Save button; a newly enabled toggle triggers a check after the save.
+  contribute?.(() => {
+    if (auto.checked && !wasOn) setTimeout(() => { if (state.settings?.auto_update !== false) checkForUpdates(); }, 0);
+    return { auto_update: auto.checked };
   });
 
   const result = el("span", { class: "upd-result muted", dir: "auto" });
@@ -164,14 +164,15 @@ export function renderSettingsSection(form) {
     result.textContent = t("upd_checking");
     view.hidden = true;
     await checkForUpdates({ force: true });
+    manualChecked = true;
     checkBtn.disabled = false;
     showResult();
   });
-  if (info?.available) showResult();
+  if (info?.available || manualChecked) showResult();
 
   form.append(el("div", { class: "field upd-section" },
     el("span", { class: "field-label" }, t("upd_section")),
-    el("label", { class: "upd-toggle" }, auto, el("span", {}, t("upd_auto"))),
+    el("label", { class: "upd-toggle", for: "upd-auto" }, auto, el("span", {}, t("upd_auto"))),
     el("div", { class: "upd-actions" }, checkBtn, view, result)));
 }
 

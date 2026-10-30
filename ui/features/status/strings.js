@@ -12,6 +12,7 @@ export default {
     startingOllama: "جارٍ التشغيل…",
     startFailed: "تعذّر تشغيل Ollama. تأكد من تثبيته.",
     backendDown: "تعذّر الاتصال بالخادم المحلي",
+    startSlow: "لم يستجب Ollama بعد. تأكد من أنه مثبّت ومن صحة عنوانه في الإعدادات؛ سنواصل المحاولة في الخلفية.",
   },
   en: {
     statusConnected: "Connected",
@@ -22,5 +23,6 @@ export default {
     startingOllama: "Starting…",
     startFailed: "Couldn't start Ollama. Make sure it is installed.",
     backendDown: "Can't reach the local server",
+    startSlow: "Ollama hasn't responded yet. Make sure it is installed and its address in Settings is correct; we'll keep checking in the background.",
   },
 };

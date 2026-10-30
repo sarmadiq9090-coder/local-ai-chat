@@ -145,7 +145,9 @@ export function rateModel(model, system) {
   const fitsShared = model.sizeGb <= vram + RAM_SHARE * ram;
   // LTR isolates keep "8 GB" in order inside Arabic sentences.
   const ltr = x => `\u2066${x}\u2069`;
-  const vars = { vram: ltr(`${fmtGb(vram)} GB`), ram: ltr(`${fmtGb(ram)} GB`), need: ltr(`${fmtGb(need)} GB`), active: ltr(model.activeParams || "") };
+  const budget = vram + RAM_SHARE * ram; // what fitsShared compares against (shown in "no" reasons)
+  const vars = { vram: ltr(`${fmtGb(vram)} GB`), ram: ltr(`${fmtGb(ram)} GB`), need: ltr(`${fmtGb(need)} GB`),
+    budget: ltr(`${fmtGb(budget)} GB`), active: ltr(model.activeParams || "") };
   const make = (level, reasonKey) => ({
     level,
     label: t(`rate_${level}`),

@@ -1,7 +1,8 @@
 // dom.js — tiny DOM helpers shared by every module:
 // $ / $$ selectors, el() element builder, escapeHtml, clipboard copy,
 // toast notifications, a status line setter, and a modal/confirm system
-// (with a stack so Esc closes the top-most dialog).
+// (with a stack so Esc closes the top-most dialog; Tab is trapped inside the
+// top dialog, the first field gets focus on open, the opener gets it back on close).
 
 import { t } from "./i18n.js";
 import { icon } from "./icons.js";
@@ -92,6 +93,22 @@ export function setStatus(text, kind = "") {
 // ---------- modals ----------
 const modalStack = [];
 
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+/** Visible, enabled focusable elements inside `root`, in DOM order. */
+const focusables = root => [...root.querySelectorAll(FOCUSABLE)].filter(n => !n.closest("[hidden]") && n.getClientRects().length);
+
+// Keep Tab / Shift+Tab inside the top-most dialog.
+document.addEventListener("keydown", e => {
+  if (e.key !== "Tab" || !modalStack.length) return;
+  const dialog = modalStack.at(-1).el;
+  const items = focusables(dialog);
+  if (!items.length) { e.preventDefault(); dialog.focus(); return; }
+  const first = items[0], last = items.at(-1);
+  const inside = dialog.contains(document.activeElement);
+  if (e.shiftKey && (!inside || document.activeElement === first || document.activeElement === dialog)) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && (!inside || document.activeElement === last)) { e.preventDefault(); first.focus(); }
+});
+
 /**
  * Open a modal dialog. Returns { el, body, close(force) }.
  * beforeClose() may return false to veto a non-forced close.
@@ -100,7 +117,8 @@ export function openModal({ title, body, actions = [], className = "", beforeClo
   const bodyEl = el("div", { class: "modal-body" }, body);
   const footer = actions.length ? el("div", { class: "modal-foot" }, actions) : null;
   const handle = {};
-  const dialog = el("div", { class: `modal ${className}`, role: "dialog", "aria-modal": "true" },
+  const opener = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
+  const dialog = el("div", { class: `modal ${className}`, role: "dialog", "aria-modal": "true", tabindex: "-1", style: { outline: "none" }, "aria-label": typeof title === "string" ? title : null },
     el("div", { class: "modal-head" },
       el("h2", { dir: "auto" }, title),
       iconButton("x", t("cancel"), () => handle.close())),
@@ -116,14 +134,17 @@ export function openModal({ title, body, actions = [], className = "", beforeClo
       const i = modalStack.indexOf(handle);
       if (i >= 0) modalStack.splice(i, 1);
       overlay.remove();
+      // Give focus back to whatever opened the dialog (unless another dialog is on top now).
+      if (opener?.isConnected && (!modalStack.length || modalStack.at(-1).el.contains(opener))) opener.focus();
       onClose?.();
     },
   });
   modalStack.push(handle);
   document.body.append(overlay);
   requestAnimationFrame(() => overlay.classList.add("show"));
-  const first = dialog.querySelector("input, textarea, select, .modal-foot .btn.primary");
-  first?.focus();
+  const first = focusables(dialog).find(n => n.matches("input, textarea, select"))
+    || dialog.querySelector(".modal-foot .btn.primary:not([disabled])");
+  (first || dialog).focus();
   return handle;
 }
 
@@ -141,11 +162,11 @@ export const hasOpenModal = () => modalStack.length > 0;
 export const modalsFeature = { name: "modals", onEscape: closeTopModal };
 
 /** Promise-based confirm dialog → resolves true/false. */
-export function confirmDialog(message, { title = t("confirm"), okText = t("confirm"), danger = false } = {}) {
+export function confirmDialog(message, { title = t("confirm"), okText = t("confirm"), cancelText = t("cancel"), danger = false } = {}) {
   return new Promise(resolve => {
     let result = false;
     const ok = el("button", { class: `btn primary${danger ? " danger" : ""}`, type: "button", onclick: () => { result = true; m.close(true); } }, okText);
-    const cancel = el("button", { class: "btn", type: "button", onclick: () => m.close(true) }, t("cancel"));
+    const cancel = el("button", { class: "btn", type: "button", onclick: () => m.close(true) }, cancelText);
     const m = openModal({
       title,
       className: "small",
