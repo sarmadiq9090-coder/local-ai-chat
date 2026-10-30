@@ -73,6 +73,31 @@ pub fn acquire_wait(_timeout: std::time::Duration) -> Option<Guard> {
     acquire()
 }
 
+/// Native error dialog (blocking). Used when the app can't start at all,
+/// e.g. after an update while the previous instance never exited.
+#[cfg(windows)]
+pub fn show_error(text: &str) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        MB_ICONERROR, MB_OK, MB_RTLREADING, MB_SETFOREGROUND, MessageBoxW,
+    };
+    let text = wide(text);
+    let title = wide(WINDOW_TITLE);
+    // SAFETY: valid NUL-terminated UTF-16 strings; no owner window.
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            text.as_ptr(),
+            title.as_ptr(),
+            MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_RTLREADING,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+pub fn show_error(text: &str) {
+    eprintln!("{text}");
+}
+
 #[cfg(windows)]
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()

@@ -20,7 +20,7 @@ use tokio::sync::mpsc;
 
 use crate::assistants::{
     AssistantPatch, AssistantStore, DocInput, ModelMissing, NewAssistant, NotFound, Progress,
-    extract,
+    TooLarge, check_doc_text_size, extract,
 };
 use crate::error::{ApiError, ApiResult};
 use crate::server::AppState;
@@ -38,10 +38,14 @@ pub fn router() -> Router<AppState> {
         .route("/assistants/{id}/search", post(search))
 }
 
-/// Map core errors to HTTP: NotFound → 404, ModelMissing → 424, else 500.
+/// Map core errors to HTTP: NotFound → 404, TooLarge → 400,
+/// ModelMissing → 424, else 500.
 fn map_err(e: anyhow::Error) -> ApiError {
     if let Some(nf) = e.downcast_ref::<NotFound>() {
         return ApiError::not_found(nf.to_string());
+    }
+    if let Some(tl) = e.downcast_ref::<TooLarge>() {
+        return ApiError::bad_request(tl.to_string());
     }
     if e.downcast_ref::<ModelMissing>().is_some() {
         // Rendered with `missing_model` by `model_missing_response`.
@@ -236,6 +240,10 @@ async fn add_docs(
         if note.name.trim().is_empty() || note.text.trim().is_empty() {
             return Err(ApiError::bad_request("note name and text are required"));
         }
+        // Cheap early 400 for oversized notes; files are checked after
+        // extraction (reported as an `{error, name}` line, before embedding).
+        check_doc_text_size(note.name.trim(), note.text.len())
+            .map_err(|e| ApiError::bad_request(e.to_string()))?;
         inputs.push((note.name, DocInput::Note(note.text)));
     }
 

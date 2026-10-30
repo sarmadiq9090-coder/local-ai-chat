@@ -137,14 +137,9 @@ mod tests {
             "cross-lingual match should beat an unrelated sentence"
         );
 
-        let err = embed(
-            &http,
-            &url,
-            "no-such-embed-model-xyz",
-            &inputs[..1].to_vec(),
-        )
-        .await
-        .unwrap_err();
+        let err = embed(&http, &url, "no-such-embed-model-xyz", &inputs[..1])
+            .await
+            .unwrap_err();
         assert!(err.downcast_ref::<ModelMissing>().is_some(), "{err:#}");
     }
 }

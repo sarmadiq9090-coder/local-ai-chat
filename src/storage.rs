@@ -61,16 +61,15 @@ impl ConversationStore {
         let mut out = Vec::new();
         for entry in std::fs::read_dir(&self.dir)? {
             let path = entry?.path();
-            if path.extension().is_some_and(|e| e == "json") {
-                if let Some(meta) = read_json(&path)
+            if path.extension().is_some_and(|e| e == "json")
+                && let Some(meta) = read_json(&path)
                     .as_ref()
                     .and_then(ConversationMeta::from_value)
-                {
-                    out.push(meta);
-                }
+            {
+                out.push(meta);
             }
         }
-        out.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        out.sort_by_key(|m| std::cmp::Reverse(m.updated_at));
         Ok(out)
     }
 

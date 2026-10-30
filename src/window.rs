@@ -27,14 +27,14 @@ pub fn run(url: &str, paths: &Paths) -> anyhow::Result<()> {
 
     // Keep the WebView2 profile out of the exe folder.
     let mut context = WebContext::new(Some(paths.webview_dir.clone()));
-    let app_origin = url.trim_end_matches('/').to_string();
+    let app_url = url.to_string();
 
     let _webview = WebViewBuilder::new_with_web_context(&mut context)
         .with_url(url)
         .with_background_color((31, 30, 29, 255))
         // External links open in the default browser instead of inside the app.
         .with_navigation_handler(move |target| {
-            if target.starts_with(&app_origin) {
+            if is_app_url(&app_url, &target) {
                 return true;
             }
             open_external(&target);
@@ -73,8 +73,46 @@ fn app_icon() -> Option<tao::window::Icon> {
     None
 }
 
+/// `target` has exactly the app's origin (scheme + host + port). A prefix
+/// check would accept `http://127.0.0.1:5123@evil.com/` or
+/// `http://127.0.0.1:51234/` for an app on port 5123.
+fn is_app_url(app_url: &str, target: &str) -> bool {
+    match (reqwest::Url::parse(app_url), reqwest::Url::parse(target)) {
+        (Ok(app), Ok(t)) => {
+            app.origin().is_tuple()
+                && app.origin() == t.origin()
+                && t.username().is_empty()
+                && t.password().is_none()
+        }
+        _ => false,
+    }
+}
+
 fn open_external(url: &str) {
     if url.starts_with("http://") || url.starts_with("https://") {
         let _ = std::process::Command::new("explorer").arg(url).spawn();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_app_url;
+
+    #[test]
+    fn app_url_requires_exact_origin() {
+        let app = "http://127.0.0.1:5123/";
+        assert!(is_app_url(app, "http://127.0.0.1:5123/"));
+        assert!(is_app_url(app, "http://127.0.0.1:5123"));
+        assert!(is_app_url(app, "http://127.0.0.1:5123/index.html?x=1#y"));
+        assert!(!is_app_url(app, "http://127.0.0.1:5123@evil.com/"));
+        assert!(!is_app_url(app, "http://127.0.0.1:51234/"));
+        assert!(!is_app_url(app, "http://127.0.0.1:512/"));
+        assert!(!is_app_url(app, "https://127.0.0.1:5123/"));
+        assert!(!is_app_url(app, "http://localhost:5123/"));
+        assert!(!is_app_url(app, "http://127.0.0.1.evil.com:5123/"));
+        assert!(!is_app_url(app, "http://user:pw@127.0.0.1:5123/"));
+        assert!(!is_app_url(app, "https://example.com/"));
+        assert!(!is_app_url(app, "about:blank"));
+        assert!(!is_app_url(app, "not a url"));
     }
 }

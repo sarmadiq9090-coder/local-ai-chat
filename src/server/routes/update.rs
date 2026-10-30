@@ -76,12 +76,11 @@ fn flag(v: &Option<String>) -> bool {
 
 /// Fresh (or cached) check. Returns the response and the installable release.
 async fn run_check(force: bool) -> (CheckResponse, Option<ReleaseInfo>) {
-    if !force {
-        if let Some((at, resp, rel)) = CACHE.lock().unwrap_or_else(|e| e.into_inner()).clone() {
-            if at.elapsed() < CACHE_TTL {
-                return (resp, rel);
-            }
-        }
+    if !force
+        && let Some((at, resp, rel)) = CACHE.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        && at.elapsed() < CACHE_TTL
+    {
+        return (resp, rel);
     }
     let mut resp = empty_response();
     let mut release = None;

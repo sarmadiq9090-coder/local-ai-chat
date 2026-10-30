@@ -320,3 +320,67 @@ async fn add_search_remove_reindex() {
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn size_limit_helpers() {
+    assert!(check_doc_text_size("a.txt", MAX_DOC_TEXT_BYTES).is_ok());
+    let e = check_doc_text_size("a.txt", MAX_DOC_TEXT_BYTES + 1).unwrap_err();
+    assert!(e.to_string().contains("document too large"), "{e}");
+    assert!(check_chunk_total(MAX_CHUNKS).is_ok());
+    let e = check_chunk_total(MAX_CHUNKS + 1).unwrap_err();
+    assert!(e.to_string().contains("knowledge base too large"), "{e}");
+}
+
+/// Both caps reject before any embedding call: the Ollama URL is
+/// unreachable, so reaching `/api/embed` would fail with a different error.
+#[tokio::test]
+async fn oversized_doc_and_knowledge_base_are_rejected_before_embedding() {
+    let dead = "http://127.0.0.1:9"; // discard port: nothing listens
+    let (store, dir) = temp_store(reqwest::Client::new());
+    let a = store
+        .create(NewAssistant {
+            name: "Big".into(),
+            ..Default::default()
+        })
+        .unwrap();
+
+    // 1) One document with more than 5 MB of text.
+    let huge = "word ".repeat(MAX_DOC_TEXT_BYTES / 5 + 10);
+    let err = store
+        .add_document(dead, &a.id, "huge", DocInput::Note(huge), |_| {})
+        .await
+        .unwrap_err();
+    assert!(err.downcast_ref::<TooLarge>().is_some(), "{err:#}");
+    assert!(store.get(&a.id).unwrap().unwrap().docs.is_empty());
+    let docs_dir = dir.join(&a.id).join("docs");
+    assert_eq!(std::fs::read_dir(&docs_dir).unwrap().count(), 0);
+
+    // 2) A knowledge base already at the chunk cap.
+    let full = Index {
+        embed_model: a.embed_model.clone(),
+        dim: 0,
+        chunks: (0..MAX_CHUNKS)
+            .map(|i| IndexedChunk {
+                doc_id: "old".into(),
+                i,
+                text: String::new(),
+                vec: Vec::new(),
+            })
+            .collect(),
+    };
+    store.save_index(&a.id, full).await.unwrap();
+    let err = store
+        .add_document(
+            dead,
+            &a.id,
+            "one more",
+            DocInput::Note("small note".into()),
+            |_| {},
+        )
+        .await
+        .unwrap_err();
+    assert!(err.downcast_ref::<TooLarge>().is_some(), "{err:#}");
+    assert!(store.get(&a.id).unwrap().unwrap().docs.is_empty());
+    assert_eq!(std::fs::read_dir(&docs_dir).unwrap().count(), 0);
+    let _ = std::fs::remove_dir_all(dir);
+}

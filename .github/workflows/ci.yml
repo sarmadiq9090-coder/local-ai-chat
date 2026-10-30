@@ -19,10 +19,8 @@ env:
 
 jobs:
   fmt:
-    name: rustfmt (advisory)
+    name: rustfmt
     runs-on: windows-latest
-    # Formatting problems are reported but do not fail the workflow yet.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -31,10 +29,8 @@ jobs:
       - run: cargo fmt --all -- --check
 
   clippy:
-    name: clippy (advisory)
+    name: clippy
     runs-on: windows-latest
-    # TODO: drop continue-on-error once the codebase is clippy-clean.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

@@ -27,6 +27,15 @@ mod window;
 
 use std::sync::mpsc;
 
+/// Shown when the updated exe can't start because the old one is still running.
+const AFTER_UPDATE_STUCK: &str = concat!(
+    "تم تثبيت التحديث، لكن النسخة السابقة ما زالت تعمل فتعذّر تشغيل النسخة الجديدة.\n",
+    "أغلق النسخة السابقة (أو أعد تشغيل الجهاز) ثم افتح التطبيق مجددًا.\n\n",
+    "The update was installed, but the previous version is still running, ",
+    "so the new version could not start.\n",
+    "Close the previous version (or restart Windows) and open the app again.",
+);
+
 fn main() -> anyhow::Result<()> {
     // Developer mode: `local-ai-chat --serve [port]` runs only the server (no
     // window, no single-instance lock). In debug builds the UI is read from
@@ -48,11 +57,15 @@ fn main() -> anyhow::Result<()> {
 
     // After an update the old instance may still be exiting: wait for its mutex.
     let instance = if after_update {
-        single_instance::acquire_wait(std::time::Duration::from_secs(10))
+        single_instance::acquire_wait(std::time::Duration::from_secs(30))
     } else {
         single_instance::acquire()
     };
     let Some(_instance) = instance else {
+        if after_update {
+            // The old version never let go: say so instead of vanishing.
+            single_instance::show_error(AFTER_UPDATE_STUCK);
+        }
         return Ok(()); // already running: the existing window was focused
     };
     let paths = config::Paths::resolve()?;

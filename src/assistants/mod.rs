@@ -43,6 +43,46 @@ impl std::fmt::Display for NotFound {
 
 impl std::error::Error for NotFound {}
 
+/// Max extracted plain text per document, in bytes (5 MB).
+pub const MAX_DOC_TEXT_BYTES: usize = 5 * 1024 * 1024;
+/// Max indexed chunks per assistant (all documents together).
+pub const MAX_CHUNKS: usize = 20_000;
+
+/// A document or knowledge base exceeds [`MAX_DOC_TEXT_BYTES`] /
+/// [`MAX_CHUNKS`]. Checked before anything is embedded; answer 400.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TooLarge(pub String);
+
+impl std::fmt::Display for TooLarge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for TooLarge {}
+
+/// `Err(TooLarge)` if a document's extracted text is over the cap.
+pub fn check_doc_text_size(name: &str, text_len: usize) -> Result<(), TooLarge> {
+    if text_len > MAX_DOC_TEXT_BYTES {
+        return Err(TooLarge(format!(
+            "document too large: {name} has {:.1} MB of text (limit {} MB)",
+            text_len as f64 / (1024.0 * 1024.0),
+            MAX_DOC_TEXT_BYTES / (1024 * 1024)
+        )));
+    }
+    Ok(())
+}
+
+/// `Err(TooLarge)` if the knowledge base would hold more than [`MAX_CHUNKS`].
+pub fn check_chunk_total(total: usize) -> Result<(), TooLarge> {
+    if total > MAX_CHUNKS {
+        return Err(TooLarge(format!(
+            "knowledge base too large: {total} chunks (limit {MAX_CHUNKS}); remove some documents first"
+        )));
+    }
+    Ok(())
+}
+
 #[derive(Clone)]
 pub struct AssistantStore {
     inner: Arc<Inner>,
@@ -118,7 +158,7 @@ impl AssistantStore {
                 out.push(a);
             }
         }
-        out.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        out.sort_by_key(|a| std::cmp::Reverse(a.updated_at));
         Ok(out)
     }
 
@@ -348,6 +388,7 @@ impl AssistantStore {
         if text.is_empty() {
             bail!("no text found in {name}");
         }
+        check_doc_text_size(name, text.len())?;
         progress(Progress {
             status: "extracting",
             done: 1,
@@ -396,6 +437,7 @@ impl AssistantStore {
         }
 
         let pieces = chunk::chunk(text);
+        check_chunk_total(idx.chunks.len() + pieces.len())?;
         let vecs = self
             .embed_all(ollama_url, &a.embed_model, &pieces, progress)
             .await?;
@@ -512,6 +554,7 @@ impl AssistantStore {
                 texts.push(piece);
             }
         }
+        check_chunk_total(texts.len())?;
         let vecs = self
             .embed_all(ollama_url, &a.embed_model, &texts, progress)
             .await?;
@@ -556,7 +599,8 @@ impl AssistantStore {
 
     // ---- retrieval ------------------------------------------------------
 
-    /// Most relevant passages for `query` (default k = 5, min score 0.35).
+    /// Most relevant passages for `query` (default k = 5, min score
+    /// [`index::MIN_SCORE`] = 0.5, tuned on bge-m3).
     /// Empty when nothing passes the threshold or the knowledge base is empty.
     pub async fn search(
         &self,

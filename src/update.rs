@@ -37,6 +37,10 @@ const STAGED_EXE_NAME: &str = "local-ai-chat.new.exe";
 pub const AFTER_UPDATE_ARG: &str = "--after-update";
 /// Dev/test override for the release feed URL.
 const FEED_ENV: &str = "LOCALAI_UPDATE_FEED";
+/// Largest executable we are willing to download (200 MB).
+pub const MAX_EXE_BYTES: u64 = 200 * 1024 * 1024;
+/// Largest `.sha256` file we are willing to download (1 KB).
+pub const MAX_SHA_BYTES: u64 = 1024;
 
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -187,6 +191,27 @@ pub fn parse_release(json: &[u8]) -> anyhow::Result<ReleaseInfo> {
     })
 }
 
+/// The dev feed override is active (`LOCALAI_UPDATE_FEED` set and non-empty).
+fn dev_feed_active() -> bool {
+    std::env::var(FEED_ENV).is_ok_and(|u| !u.trim().is_empty())
+}
+
+/// Download URLs must be `https://`. Plain `http://` is accepted only for
+/// `127.0.0.1` / `localhost` / `[::1]`, and only when `allow_local_http`
+/// (i.e. the `LOCALAI_UPDATE_FEED` dev override is set).
+pub fn check_download_url(url: &str, allow_local_http: bool) -> anyhow::Result<()> {
+    let u = reqwest::Url::parse(url).with_context(|| format!("invalid download URL {url:?}"))?;
+    match u.scheme() {
+        "https" if u.host_str().is_some() => Ok(()),
+        "http" if allow_local_http && is_loopback_url(&u) => Ok(()),
+        _ => bail!("refusing to download the update over an insecure URL: {url}"),
+    }
+}
+
+fn is_loopback_url(u: &reqwest::Url) -> bool {
+    matches!(u.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))
+}
+
 fn feed_url() -> String {
     std::env::var(FEED_ENV)
         .ok()
@@ -201,6 +226,16 @@ fn http() -> &'static reqwest::Client {
             .user_agent(format!("local-ai-chat/{CURRENT_VERSION}"))
             .connect_timeout(Duration::from_secs(10))
             .read_timeout(Duration::from_secs(60))
+            // Never follow a redirect from https down to plain http.
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                if attempt.previous().len() >= 10 {
+                    attempt.error("too many redirects")
+                } else if check_download_url(attempt.url().as_str(), dev_feed_active()).is_ok() {
+                    attempt.follow()
+                } else {
+                    attempt.error("insecure redirect")
+                }
+            }))
             .build()
             .expect("http client")
     })
@@ -285,59 +320,13 @@ pub enum Progress {
 
 /// Download, verify, swap and relaunch. On success the new exe is running (or
 /// starting) and the caller should report "restarting" and call [`request_exit`].
-/// On error the current exe is left in place.
+/// On error (insecure URL, oversize, checksum mismatch, I/O) the current exe is
+/// left in place.
 pub async fn install(
     release: &ReleaseInfo,
     mut progress: impl FnMut(Progress),
 ) -> anyhow::Result<()> {
-    let sha_text = http()
-        .get(&release.sha_url)
-        .timeout(Duration::from_secs(30))
-        .send()
-        .await
-        .and_then(|r| r.error_for_status())
-        .context("could not download the checksum")?
-        .text()
-        .await
-        .context("could not download the checksum")?;
-    let expected = parse_sha256_file(&sha_text).context("the checksum file is not valid")?;
-
-    let resp = http()
-        .get(&release.asset_url)
-        .send()
-        .await
-        .and_then(|r| r.error_for_status())
-        .context("could not download the update")?;
-    let total = resp.content_length();
-    let mut data = Vec::with_capacity(total.unwrap_or(0).min(512 << 20) as usize);
-    let mut stream = resp.bytes_stream();
-    let mut last_report = 0u64;
-    progress(Progress::Downloading {
-        downloaded: 0,
-        total,
-    });
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.context("download interrupted")?;
-        data.extend_from_slice(&chunk);
-        let n = data.len() as u64;
-        if n - last_report >= 256 * 1024 {
-            last_report = n;
-            progress(Progress::Downloading {
-                downloaded: n,
-                total,
-            });
-        }
-    }
-    progress(Progress::Downloading {
-        downloaded: data.len() as u64,
-        total,
-    });
-    if data.is_empty() {
-        bail!("the downloaded file is empty");
-    }
-
-    progress(Progress::Verifying);
-    verify_sha256(&data, &expected)?;
+    let data = download_verified(release, dev_feed_active(), &mut progress).await?;
 
     tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
         let exe = std::env::current_exe().context("cannot locate the running exe")?;
@@ -353,6 +342,83 @@ pub async fn install(
 
     progress(Progress::Restarting);
     Ok(())
+}
+
+/// Download the checksum and the exe (size-capped, URL-checked) and verify
+/// them. Nothing touches the disk here.
+async fn download_verified(
+    release: &ReleaseInfo,
+    allow_local_http: bool,
+    progress: &mut impl FnMut(Progress),
+) -> anyhow::Result<Vec<u8>> {
+    check_download_url(&release.sha_url, allow_local_http)?;
+    check_download_url(&release.asset_url, allow_local_http)?;
+
+    let resp = http()
+        .get(&release.sha_url)
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .context("could not download the checksum")?;
+    let sha_bytes = read_capped(resp, MAX_SHA_BYTES, "checksum file", |_, _| {})
+        .await
+        .context("could not download the checksum")?;
+    let sha_text = String::from_utf8_lossy(&sha_bytes);
+    let expected = parse_sha256_file(&sha_text).context("the checksum file is not valid")?;
+
+    let resp = http()
+        .get(&release.asset_url)
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .context("could not download the update")?;
+    let data = read_capped(resp, MAX_EXE_BYTES, "update", |downloaded, total| {
+        progress(Progress::Downloading { downloaded, total })
+    })
+    .await?;
+    if data.is_empty() {
+        bail!("the downloaded file is empty");
+    }
+
+    progress(Progress::Verifying);
+    verify_sha256(&data, &expected)?;
+    Ok(data)
+}
+
+/// Read a response body into memory, failing as soon as it exceeds `max`
+/// bytes (checked against `Content-Length` first, then while streaming).
+/// `on_progress(downloaded, total)` is called at the start, every 256 KB and
+/// at the end.
+async fn read_capped(
+    resp: reqwest::Response,
+    max: u64,
+    what: &str,
+    mut on_progress: impl FnMut(u64, Option<u64>),
+) -> anyhow::Result<Vec<u8>> {
+    let too_big = || anyhow::anyhow!("the {what} is too large (limit {max} bytes)");
+    let total = resp.content_length();
+    if total.is_some_and(|t| t > max) {
+        return Err(too_big());
+    }
+    let mut data = Vec::with_capacity(total.unwrap_or(0) as usize);
+    let mut stream = resp.bytes_stream();
+    let mut last_report = 0u64;
+    on_progress(0, total);
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.with_context(|| format!("{what} download interrupted"))?;
+        if data.len() as u64 + chunk.len() as u64 > max {
+            return Err(too_big());
+        }
+        data.extend_from_slice(&chunk);
+        let n = data.len() as u64;
+        if n - last_report >= 256 * 1024 {
+            last_report = n;
+            on_progress(n, total);
+        }
+    }
+    on_progress(data.len() as u64, total);
+    Ok(data)
 }
 
 fn sibling(exe: &Path, name: &str) -> PathBuf {
@@ -601,6 +667,143 @@ mod tests {
         unsafe { std::env::set_var(FEED_ENV, "http://127.0.0.1:1/unreachable") };
         assert!(fetch_latest().await.is_err());
         unsafe { std::env::remove_var(FEED_ENV) };
+    }
+
+    #[test]
+    fn download_urls_must_be_https() {
+        let gh = "https://github.com/x/y/releases/download/v2.1.0/local-ai-chat.exe";
+        assert!(check_download_url(gh, false).is_ok());
+        assert!(check_download_url(gh, true).is_ok());
+        assert!(check_download_url("http://github.com/x.exe", false).is_err());
+        assert!(check_download_url("http://github.com/x.exe", true).is_err());
+        assert!(check_download_url("http://127.0.0.1:8080/x.exe", false).is_err());
+        assert!(check_download_url("http://127.0.0.1:8080/x.exe", true).is_ok());
+        assert!(check_download_url("http://localhost/x.exe", true).is_ok());
+        assert!(check_download_url("http://[::1]:9/x.exe", true).is_ok());
+        assert!(check_download_url("http://127.0.0.1.evil.com/x.exe", true).is_err());
+        assert!(check_download_url("http://localhost@evil.com/x.exe", true).is_err());
+        assert!(check_download_url("file:///C:/x.exe", true).is_err());
+        assert!(check_download_url("ftp://example.com/x.exe", true).is_err());
+        assert!(check_download_url("not a url", true).is_err());
+    }
+
+    /// Serve fixed bodies by path on a loopback port until the test ends.
+    /// `with_len = false` omits Content-Length (body ends at connection close).
+    fn file_server(routes: Vec<(&'static str, Vec<u8>, bool)>) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut s) = stream else { return };
+                let mut buf = [0u8; 4096];
+                let n = s.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]);
+                let path = req.split_whitespace().nth(1).unwrap_or("/").to_string();
+                let Some((_, body, with_len)) = routes.iter().find(|r| r.0 == path) else {
+                    let _ = s.write_all(
+                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    );
+                    continue;
+                };
+                let len = if *with_len {
+                    format!("Content-Length: {}\r\n", body.len())
+                } else {
+                    String::new()
+                };
+                let _ = write!(s, "HTTP/1.1 200 OK\r\n{len}Connection: close\r\n\r\n");
+                let _ = s.write_all(body);
+            }
+        });
+        base
+    }
+
+    fn release_at(base: &str, exe: &str, sha: &str) -> ReleaseInfo {
+        ReleaseInfo {
+            version: "9.9.9".into(),
+            notes: String::new(),
+            published_at: None,
+            asset_url: format!("{base}{exe}"),
+            sha_url: format!("{base}{sha}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn download_is_verified_and_capped() {
+        let good_sha = format!(
+            "{}  local-ai-chat.exe\n",
+            to_hex(&Sha256::digest(b"new exe"))
+        );
+        let base = file_server(vec![
+            ("/exe", b"new exe".to_vec(), true),
+            ("/exe-nolen", b"new exe".to_vec(), false),
+            ("/tampered", b"evil exe".to_vec(), true),
+            ("/sha", good_sha.into_bytes(), true),
+            ("/sha-big", vec![b'a'; MAX_SHA_BYTES as usize + 1], true),
+            (
+                "/sha-big-nolen",
+                vec![b'a'; MAX_SHA_BYTES as usize + 1],
+                false,
+            ),
+        ]);
+        let mut events = 0;
+        let mut progress = |_: Progress| events += 1;
+
+        let data = download_verified(&release_at(&base, "/exe", "/sha"), true, &mut progress)
+            .await
+            .unwrap();
+        assert_eq!(data, b"new exe");
+        let data = download_verified(
+            &release_at(&base, "/exe-nolen", "/sha"),
+            true,
+            &mut progress,
+        )
+        .await
+        .unwrap();
+        assert_eq!(data, b"new exe");
+
+        let err = download_verified(&release_at(&base, "/tampered", "/sha"), true, &mut progress)
+            .await
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("checksum mismatch"), "{err:#}");
+
+        for sha in ["/sha-big", "/sha-big-nolen"] {
+            let err = download_verified(&release_at(&base, "/exe", sha), true, &mut progress)
+                .await
+                .unwrap_err();
+            assert!(format!("{err:#}").contains("too large"), "{err:#}");
+        }
+
+        // Local http without the dev override is refused before any request.
+        let err = download_verified(&release_at(&base, "/exe", "/sha"), false, &mut progress)
+            .await
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("insecure"), "{err:#}");
+        assert!(events > 0);
+    }
+
+    #[tokio::test]
+    async fn read_capped_enforces_limit_with_and_without_length() {
+        let base = file_server(vec![
+            ("/len", vec![7u8; 5000], true),
+            ("/nolen", vec![7u8; 5000], false),
+        ]);
+        for path in ["/len", "/nolen"] {
+            let url = format!("{base}{path}");
+            let resp = http().get(&url).send().await.unwrap();
+            let err = read_capped(resp, 4999, "update", |_, _| {})
+                .await
+                .unwrap_err();
+            assert!(err.to_string().contains("too large"), "{path}: {err:#}");
+            let resp = http().get(&url).send().await.unwrap();
+            assert_eq!(
+                read_capped(resp, 5000, "update", |_, _| {})
+                    .await
+                    .unwrap()
+                    .len(),
+                5000
+            );
+        }
     }
 
     #[test]

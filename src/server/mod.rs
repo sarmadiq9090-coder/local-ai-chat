@@ -85,7 +85,11 @@ pub async fn run(paths: Paths, port: u16, port_tx: mpsc::Sender<u16>) -> anyhow:
     let port = listener.local_addr()?.port();
 
     let app = Router::new()
-        .nest("/api/app", routes::router())
+        .nest(
+            "/api/app",
+            // Extractor rejections (bad JSON, 413…) → `{"error"}` (see error.rs).
+            routes::router().layer(middleware::from_fn(crate::error::json_errors)),
+        )
         .nest("/api/ollama", ollama_proxy::router())
         .fallback(assets::serve)
         // Chats resend attachments with the whole history; the 2 MB default is too small.
