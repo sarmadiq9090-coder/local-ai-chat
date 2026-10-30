@@ -1,6 +1,9 @@
 //! Single-instance guard: a second launch focuses the existing window and exits.
 
-pub const WINDOW_TITLE: &str = "الذكاء المحلي";
+pub const WINDOW_TITLE: &str = "Lemon";
+/// Window title of versions before the rename (<= 2.1.1), still matched when
+/// focusing an already running instance.
+const LEGACY_TITLE: &str = "الذكاء المحلي";
 
 /// Holds the named mutex for the lifetime of the app.
 pub struct Guard {
@@ -42,7 +45,7 @@ fn focus_existing_window() {
     };
 
     struct Search {
-        title: Vec<u16>,
+        titles: Vec<Vec<u16>>,
         exe_name: String,
         own_pid: u32,
         found: HWND,
@@ -55,12 +58,12 @@ fn focus_existing_window() {
         // SAFETY: `hwnd` comes from the system; buffers are sized as passed.
         unsafe {
             let len = GetWindowTextLengthW(hwnd);
-            if len <= 0 || len as usize != search.title.len() {
+            if len <= 0 || !search.titles.iter().any(|t| t.len() == len as usize) {
                 return 1;
             }
             let mut buf = vec![0u16; len as usize + 1];
             let got = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
-            if got <= 0 || buf[..got as usize] != search.title[..] {
+            if got <= 0 || !search.titles.iter().any(|t| buf[..got as usize] == t[..]) {
                 return 1;
             }
         }
@@ -91,7 +94,10 @@ fn focus_existing_window() {
         return;
     };
     let mut search = Search {
-        title: WINDOW_TITLE.encode_utf16().collect(),
+        titles: [WINDOW_TITLE, LEGACY_TITLE]
+            .iter()
+            .map(|t| t.encode_utf16().collect())
+            .collect(),
         exe_name,
         own_pid: std::process::id(),
         found: std::ptr::null_mut(),

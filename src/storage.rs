@@ -9,7 +9,7 @@
 //! A file that can't be parsed is listed as `corrupt` (id = file name) instead of
 //! disappearing, so the user can see and delete it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
@@ -126,7 +126,7 @@ impl ConversationStore {
     pub fn list(&self) -> anyhow::Result<Vec<ConversationMeta>> {
         let mut out = Vec::new();
         let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
-        let mut seen = Vec::new();
+        let mut seen = HashSet::new();
         for entry in std::fs::read_dir(&self.dir)? {
             let entry = entry?;
             let path = entry.path();
@@ -155,7 +155,7 @@ impl ConversationStore {
             if let Some(meta) = cache.get(&path).and_then(|c| c.meta.clone()) {
                 out.push(meta);
             }
-            seen.push(path);
+            seen.insert(path);
         }
         // Forget files that are gone.
         cache.retain(|p, _| seen.contains(p));

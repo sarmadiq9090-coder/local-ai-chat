@@ -34,7 +34,7 @@ published and you will be credited unless you prefer otherwise.
 
 ## Security model and scope
 
-Local AI Chat is a local, single-user desktop app. Useful context:
+Lemon (Local AI Chat) is a local, single-user desktop app. Useful context:
 
 - **Local server, loopback only.** The built-in HTTP server binds to
   `127.0.0.1` on a local port and is never exposed to the network. It has no

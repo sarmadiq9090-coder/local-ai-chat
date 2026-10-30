@@ -18,6 +18,7 @@ export default {
     save: "حفظ",
     saved: "تم حفظ الإعدادات",
     settingsSaveFailed: "تعذّر حفظ الإعدادات: {error}",
+    invalidOllamaUrl: "عنوان Ollama غير صالح؛ اكتبه كاملًا مثل http://127.0.0.1:11434",
     settingsLoadFailed: "تعذّر تحميل الإعدادات، فلم يُحفظ التغيير: {error}",
   },
   en: {
@@ -35,6 +36,7 @@ export default {
     save: "Save",
     saved: "Settings saved",
     settingsSaveFailed: "Couldn't save settings: {error}",
+    invalidOllamaUrl: "The Ollama address isn't valid; enter a full URL such as http://127.0.0.1:11434",
     settingsLoadFailed: "Couldn't load settings, so the change wasn't saved: {error}",
   },
 };

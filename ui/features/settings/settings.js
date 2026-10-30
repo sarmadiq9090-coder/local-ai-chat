@@ -114,7 +114,8 @@ export async function saveSettings(patch) {
     if (saved && typeof saved === "object") state.settings = { ...DEFAULT_SETTINGS, ...saved };
     rememberTheme(state.settings.theme);
   } catch (e) {
-    toast(t("settingsSaveFailed", { error: e.message }), "error");
+    const error = e.code === "invalid_ollama_url" ? t("invalidOllamaUrl") : e.message;
+    toast(t("settingsSaveFailed", { error }), "error");
     throw e;
   } finally {
     if (!previewing) {

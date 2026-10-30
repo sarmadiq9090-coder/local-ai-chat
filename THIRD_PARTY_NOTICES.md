@@ -1,6 +1,6 @@
 # Third-party notices
 
-Local AI Chat is licensed under the [MIT License](LICENSE). It is built on
+Lemon (Local AI Chat) is licensed under the [MIT License](LICENSE). It is built on
 open-source software from other authors, listed below. This file is a summary
 for convenience; the authoritative license text of each Rust crate ships with
 the crate source (see `cargo metadata` or the crate's page on
@@ -75,7 +75,7 @@ Microsoft's own license terms and is **not** redistributed by this project.
 
 ## 5. Not bundled: Ollama and AI models
 
-Local AI Chat is a client for [Ollama](https://ollama.com). **Neither Ollama
+Lemon is a client for [Ollama](https://ollama.com). **Neither Ollama
 nor any model is included in this repository or in the release executable.**
 
 - Ollama is installed separately by the user and is licensed under its own

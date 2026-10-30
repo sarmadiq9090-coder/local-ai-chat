@@ -6,9 +6,9 @@ fn main() {
         let version = env!("CARGO_PKG_VERSION");
         let mut res = winresource::WindowsResource::new();
         res.set_icon("assets/icon.ico")
-            .set("ProductName", "Local AI Chat")
-            .set("FileDescription", "الذكاء المحلي - Local AI Chat")
-            .set("CompanyName", "Local AI Chat")
+            .set("ProductName", "Lemon")
+            .set("FileDescription", "Lemon - Local AI Chat")
+            .set("CompanyName", "Lemon")
             .set("LegalCopyright", "Copyright (c) 2026 Sarmad — MIT License")
             .set("FileVersion", version)
             .set("ProductVersion", version);

@@ -1,4 +1,4 @@
-//! Local AI Chat — a Windows desktop chat client for Ollama.
+//! Lemon (Local AI Chat) — a Windows desktop chat client for Ollama.
 //!
 //! Architecture:
 //! - `server`  : local HTTP server (axum) serving the embedded UI and the JSON API
@@ -90,7 +90,7 @@ fn serve_only(port: u16) -> anyhow::Result<()> {
     let (port_tx, port_rx) = mpsc::channel();
     std::thread::spawn(move || {
         if let Ok(port) = port_rx.recv() {
-            println!("Local AI Chat (dev) listening on http://127.0.0.1:{port}/");
+            println!("Lemon (dev) listening on http://127.0.0.1:{port}/");
         }
     });
     tokio::runtime::Runtime::new()?.block_on(server::run(paths, port, port_tx))

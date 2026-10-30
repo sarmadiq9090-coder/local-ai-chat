@@ -1,6 +1,6 @@
 [package]
 name = "local-ai-chat"
-version = "2.1.1"
+version = "2.2.0"
 description = "Windows desktop chat client for local AI models (Ollama)"
 edition = "2024"
 license = "MIT"

@@ -1,4 +1,4 @@
-# الذكاء المحلي (Local AI Chat)
+# 🍋 Lemon — Local AI Chat
 
 **[English](README.en.md)** · العربية
 
@@ -22,6 +22,8 @@
 - 🔒 كل شيء على جهازك: لا تتبّع، والخادم المحلي يرفض أي طلب من مواقع أخرى.
 
 ![الواجهة العربية](docs/screenshots/home-ar.png)
+
+![المعاينة المباشرة: لعبة صغيرة تعمل بجانب الكود](docs/screenshots/preview-en.png)
 
 ## التثبيت
 

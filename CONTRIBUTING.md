@@ -1,4 +1,4 @@
-# Contributing to Local AI Chat
+# Contributing to Lemon — Local AI Chat
 
 <div dir="rtl">
 
