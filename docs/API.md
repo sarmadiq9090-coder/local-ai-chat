@@ -40,7 +40,6 @@ type Settings = {
   language: "ar" | "en";     // UI language, default "ar" (unknown → "ar"). While system_prompt
                              // equals the other language's built-in default it is swapped to this
                              // language's default on save; a custom prompt is never changed.
-
   auto_update: boolean;      // check GitHub for a newer release on start + every 6 h, default true
 };
 
