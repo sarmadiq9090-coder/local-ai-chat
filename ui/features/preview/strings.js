@@ -12,6 +12,8 @@ export default {
     fixErrors: "اطلب الإصلاح",
     fixPrompt: "ظهرت هذه الأخطاء عند تشغيل الكود. صلّحها وأعطني الكود كاملًا بعد الإصلاح:\n\n```\n{errors}\n```",
     consoleTitle: "مخرجات الكونسول",
+    closeEsc: "إغلاق (Esc — يعمل أيضًا داخل المعاينة)",
+    previewWaitReply: "انتظر حتى ينتهي الرد الحالي ثم اطلب الإصلاح",
   },
   en: {
     preview: "Preview",
@@ -22,5 +24,7 @@ export default {
     fixErrors: "Ask for a fix",
     fixPrompt: "These errors appeared when running the code. Fix them and give me the complete code after the fix:\n\n```\n{errors}\n```",
     consoleTitle: "Console output",
+    closeEsc: "Close (Esc — also works inside the preview)",
+    previewWaitReply: "Wait for the reply to finish, then ask for a fix",
   },
 };

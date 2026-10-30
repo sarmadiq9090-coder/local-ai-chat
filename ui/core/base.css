@@ -42,7 +42,7 @@
   --line: #e3dfd4;
   --line-strong: #cfc9bb;
   --text: #2b2924;
-  --muted: #77736a;
+  --muted: #6b675f;   /* ≥4.5:1 on --code-bar, --side, --bg (was #77736a) */
   --accent: #c96442;
   --accent-hover: #b75a3a;
   --user: #efece4;

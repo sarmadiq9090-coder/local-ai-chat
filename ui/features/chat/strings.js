@@ -29,8 +29,10 @@ export default {
     stopped: "تم الإيقاف",
     errorPrefix: "خطأ: ",
     fileTooBig: "الملف «{name}» أكبر من {limit} ك.ب",
-    fileNotText: "الملف «{name}» ليس ملفًا نصيًا",
+    fileNotText: "تعذّر قراءة «{name}» كنص — إن كان ملفًا نصيًا فاحفظه بترميز UTF-8 وأعد المحاولة",
     fileReadFailed: "تعذّر قراءة الملف «{name}»",
+    errOllamaDown: "تعذّر الاتصال بـ Ollama — تأكد أنه يعمل ثم أعد المحاولة",
+    errNoChatSupport: "الموديل «{model}» لا يدعم المحادثة (قد يكون موديل تضمين) — اختر موديلًا آخر",
   },
   en: {
     noModelSelected: "Pick a model first (or download one from Manage models)",
@@ -58,7 +60,9 @@ export default {
     stopped: "Stopped",
     errorPrefix: "Error: ",
     fileTooBig: "“{name}” is larger than {limit} KB",
-    fileNotText: "“{name}” is not a text file",
+    fileNotText: "Couldn't read “{name}” as text — if it is a text file, save it as UTF-8 and try again",
     fileReadFailed: "Couldn't read “{name}”",
+    errOllamaDown: "Couldn't connect to Ollama — make sure it is running, then try again",
+    errNoChatSupport: "The model “{model}” doesn't support chat (it may be an embedding model) — pick another model",
   },
 };

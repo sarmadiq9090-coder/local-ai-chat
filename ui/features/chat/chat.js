@@ -3,7 +3,9 @@
 // sending + NDJSON streaming (rAF-throttled painting, stop, tokens/s),
 // regenerate, edit-and-resend, text-file attachments (button + drag & drop),
 // empty state with example prompts, smart auto-scroll and a scroll-to-bottom button.
-// Esc: stops a running generation.
+// Esc: stops a running generation, else leaves edit mode.
+// Events: emits "ollama-maybe-down" when a reply fails because Ollama can't be reached
+// (the status feature re-checks and updates the status line).
 // Cross-feature deps: sidebar (persistConversation, titleFrom), models (supportsThinking),
 // exporter (fenceFor), assistants (prepareAssistantTurn, sourcesEl: RAG turns + sources list).
 
@@ -50,6 +52,38 @@ export function buildChatMessages(messages, systemPrompt) {
     out.push({ role: m.role, content: m.role === "user" ? withAttachments(m.content, m.attachments) : m.content });
   }
   return out;
+}
+
+/** Human-readable size: bytes below 1 KB, else KB with one decimal. Pure. */
+export const formatSize = bytes => (bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`);
+
+/**
+ * Decode a text file's bytes. UTF-8 first; if that gives many U+FFFD and the bytes look like
+ * Windows ANSI Arabic (Windows-1256, common for files saved by older Arabic Windows tools),
+ * decode as Windows-1256 instead. Returns null for binary / undecodable content. Pure.
+ */
+export function decodeText(bytes) {
+  const utf8 = new TextDecoder("utf-8").decode(bytes);
+  if (utf8.includes("\u0000")) return null;
+  const tooMany = s => (s.match(/�/g) || []).length > Math.max(8, s.length / 100);
+  if (!tooMany(utf8)) return utf8.replace(/^﻿/, "");
+  let ansi;
+  try { ansi = new TextDecoder("windows-1256").decode(bytes); } catch { return null; }
+  const high = bytes.reduce((n, b) => n + (b >= 0x80 ? 1 : 0), 0);
+  const arabic = (ansi.match(/[؀-ۿ]/g) || []).length;
+  return high && arabic >= high * 0.5 && !tooMany(ansi) ? ansi : null;
+}
+
+/** Friendly text for a failed reply; also signals the status feature when Ollama looks down. */
+function replyError(e, model) {
+  const msg = String(e?.message || e || "");
+  if (e?.code === "ollama_unreachable" || e?.status === 502 ||
+      /ollama_unreachable|not reachable|غير متاح|failed to fetch|network ?error|connection refused/i.test(msg)) {
+    emit("ollama-maybe-down");
+    return t("errOllamaDown");
+  }
+  if (/does not support (chat|generate)/i.test(msg)) return t("errNoChatSupport", { model: model || "" });
+  return t("errorPrefix") + msg;
 }
 
 const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -143,7 +177,7 @@ function attachmentChip(a, onRemove) {
   return el("span", { class: "chip", title: a.name },
     el("span", { class: "chip-icon", html: icon("file", 14) }),
     el("button", { type: "button", class: "chip-name", dir: "auto", onclick: () => previewAttachment(a) }, a.name),
-    el("span", { class: "chip-size", dir: "ltr" }, `${(new Blob([a.content]).size / 1024).toFixed(1)} KB`),
+    el("span", { class: "chip-size", dir: "ltr" }, formatSize(new Blob([a.content]).size)),
     onRemove && iconButton("x", t("removeAttachment"), onRemove, "chip-x"));
 }
 
@@ -274,21 +308,15 @@ function setComposer(text, attachments = []) {
 
 // ---------- attachments ----------
 
-const readAsText = file => new Promise((resolve, reject) => {
-  const r = new FileReader();
-  r.onload = () => resolve(String(r.result));
-  r.onerror = () => reject(r.error);
-  r.readAsText(file);
-});
+const readBytes = file => file.arrayBuffer().then(b => new Uint8Array(b));
 
 /** Read dropped/picked files as text (≤200 KB, rejects binary). */
 export async function addFiles(fileList) {
   for (const file of fileList || []) {
     if (file.size > MAX_FILE_BYTES) { toast(t("fileTooBig", { name: file.name, limit: MAX_FILE_BYTES / 1024 }), "error"); continue; }
     try {
-      const text = await readAsText(file);
-      const bad = (text.match(/�/g) || []).length;
-      if (text.includes("\u0000") || bad > Math.max(8, text.length / 100)) { toast(t("fileNotText", { name: file.name }), "error"); continue; }
+      const text = decodeText(await readBytes(file));
+      if (text == null) { toast(t("fileNotText", { name: file.name }), "error", 6000); continue; }
       state.pendingAttachments.push({ name: file.name, content: text });
     } catch {
       toast(t("fileReadFailed", { name: file.name }), "error");
@@ -352,10 +380,13 @@ export async function send(presetText) {
   const isNew = !conv;
   if (isNew) conv = createConversation();
   if (isNew && state.assistantId) conv.assistant_id = state.assistantId; // assistants: bind the new chat
-  if (state.editIndex != null && !isNew) conv.messages = conv.messages.slice(0, state.editIndex);
+  const editing = isNew ? null : state.editIndex;
+  if (editing != null) conv.messages = conv.messages.slice(0, editing);
   state.editIndex = null;
   $("#editBar").hidden = true;
 
+  // Editing the first message of a chat whose title came from it (not renamed): retitle it.
+  if (editing === 0 && !conv.title_custom) conv.title = "";
   const userMsg = { role: "user", content: text };
   if (attachments.length) userMsg.attachments = attachments.map(a => ({ name: a.name, content: a.content }));
   conv.messages.push(userMsg);
@@ -447,7 +478,7 @@ async function generate(conv) {
     }
   } catch (e) {
     if (e.name === "AbortError") ai.stopped = true;
-    else ai.error = t("errorPrefix") + e.message;
+    else ai.error = replyError(e, ai.model);
   } finally {
     finished = true;
     if (frame) cancelAnimationFrame(frame);
@@ -470,4 +501,12 @@ async function generate(conv) {
   }
 }
 
-export default { name: "chat", init: initChat, onEscape: stopGeneration };
+/** Esc: stop generation first; otherwise leave edit mode (clearing the composer). */
+function onEscape() {
+  if (stopGeneration()) return true;
+  if (state.editIndex == null) return false;
+  cancelEdit(true);
+  return true;
+}
+
+export default { name: "chat", init: initChat, onEscape };

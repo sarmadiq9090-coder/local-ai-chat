@@ -4,16 +4,21 @@
 // collapse/expand (desktop: remembered in localStorage; mobile: slide-over).
 // Also owns persistConversation(), used by chat.js to PUT conversations, and the
 // Ctrl+N "new chat" shortcut. Esc: closes the slide-over sidebar on narrow screens.
+// Remembers the open conversation (localStorage) and reopens it on startup. Lists corrupt
+// conversation files (backend meta {corrupt: true}) with a warning label so they can be deleted.
+// Renaming sets `title_custom` on the conversation (chat.js then never re-titles it).
 
 import { state, on, emit } from "../../core/state.js";
 import * as api from "../../core/api.js";
 import { $, el, iconButton, confirmDialog, toast, hasOpenModal } from "../../core/dom.js";
 import { t, registerStrings } from "../../core/i18n.js";
+import { icon } from "../../core/icons.js";
 import strings from "./strings.js";
 
 registerStrings("sidebar", strings);
 
 const COLLAPSE_KEY = "ui.sidebarCollapsed";
+const LAST_KEY = "ui.lastConversation"; // id of the conversation open at exit (reopened on startup)
 const MOBILE = window.matchMedia("(max-width: 800px)");
 let query = "";
 let renaming = false; // suspend list re-renders while an inline rename input is open
@@ -65,6 +70,7 @@ export function initSidebar() {
   MOBILE.addEventListener?.("change", closeMobileSidebar);
   on("conversations", render);
   on("current", render);
+  on("current", rememberCurrent);
   on("language", render);
   document.addEventListener("keydown", e => {
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "n") {
@@ -95,6 +101,7 @@ function render() {
 }
 
 function convItem(c) {
+  if (c.corrupt) return corruptItem(c);
   const title = el("span", { class: "conv-title", dir: "auto", title: t("rename") }, c.title || t("untitled"));
   const item = el("div", {
     class: "conv" + (state.current?.id === c.id ? " active" : ""),
@@ -105,6 +112,23 @@ function convItem(c) {
     onkeydown: e => { if (e.key === "Enter" && e.target === item) openConversation(c.id); },
   }, title, iconButton("trash", t("delete"), e => { e.stopPropagation(); removeConversation(c); }, "icon-btn conv-del"));
   title.addEventListener("dblclick", e => { e.stopPropagation(); startRename(c, title); });
+  return item;
+}
+
+/** A conversation file the backend could not parse: labelled, not renamable, deletable. */
+function corruptItem(c) {
+  const item = el("div", {
+    class: "conv corrupt",
+    dataset: { id: c.id },
+    role: "button",
+    tabindex: "0",
+    title: t("corruptConvHint"),
+    onclick: () => toast(t("corruptConvOpen"), "error", 6000),
+    onkeydown: e => { if (e.key === "Enter" && e.target === item) toast(t("corruptConvOpen"), "error", 6000); },
+  },
+  el("span", { class: "conv-warn", html: icon("alert", 14) }),
+  el("span", { class: "conv-title" }, t("corruptConv"), el("span", { class: "conv-id", dir: "ltr" }, ` ${c.id}`)),
+  iconButton("trash", t("delete"), e => { e.stopPropagation(); removeConversation({ ...c, title: t("corruptConv") }); }, "icon-btn conv-del"));
   return item;
 }
 
@@ -162,7 +186,34 @@ export async function openConversation(id) {
     emit("current");
     closeMobileSidebar();
   } catch (e) {
-    toast(t("loadFailed", { error: e.message }), "error");
+    const corrupt = e.code === "corrupt" || (e.status === 500 && /corrupt|parse|invalid|تالف/i.test(e.message));
+    toast(corrupt ? t("corruptConvOpen") : t("loadFailed", { error: e.message }), "error", corrupt ? 6000 : undefined);
+  }
+}
+
+function rememberCurrent() {
+  try {
+    if (state.current?.id) localStorage.setItem(LAST_KEY, state.current.id);
+    else localStorage.removeItem(LAST_KEY);
+  } catch { /* storage unavailable */ }
+}
+
+/** Startup: load the list, then reopen the conversation that was open last time (if it still exists). */
+async function start() {
+  let last = null;
+  try { last = localStorage.getItem(LAST_KEY); } catch { /* storage unavailable */ }
+  await refreshConversations();
+  if (!last || state.current) return;
+  const meta = state.conversations.find(c => c.id === last);
+  if (!meta || meta.corrupt) { try { localStorage.removeItem(LAST_KEY); } catch { /* ignore */ } return; }
+  try {
+    const conv = await api.getConversation(last);
+    if (state.current) return; // the user already started something else
+    conv.messages = Array.isArray(conv.messages) ? conv.messages : [];
+    state.current = conv;
+    emit("current");
+  } catch (e) {
+    console.warn("reopening the last conversation failed", e);
   }
 }
 
@@ -195,6 +246,7 @@ async function renameConversation(id, title) {
   try {
     const conv = state.current?.id === id ? state.current : await api.getConversation(id);
     conv.title = title;
+    conv.title_custom = true; // user-chosen: editing the first message must not replace it
     await persistConversation(conv, { touch: false });
     if (state.current?.id === id) emit("current-title");
   } catch (e) {
@@ -248,4 +300,4 @@ export function closeMobileSidebar() {
   return wasOpen;
 }
 
-export default { name: "sidebar", init: initSidebar, start: refreshConversations, onEscape: closeMobileSidebar };
+export default { name: "sidebar", init: initSidebar, start, onEscape: closeMobileSidebar };

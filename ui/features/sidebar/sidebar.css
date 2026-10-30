@@ -36,6 +36,10 @@ body.side-collapsed #side { margin-inline-start: -264px; }
 .conv-del { width: 28px; height: 28px; visibility: hidden; }
 .conv:hover .conv-del, .conv.active .conv-del { visibility: visible; }
 .conv-del:hover { color: var(--danger); }
+.conv.corrupt { color: var(--muted); font-style: italic; }
+.conv.corrupt .conv-del { visibility: visible; }
+.conv-warn { display: inline-flex; color: var(--danger); flex-shrink: 0; }
+.conv-id { font-size: 12px; opacity: .8; }
 .conv-rename {
   flex: 1; min-width: 0; padding: 5px 8px; border-radius: 7px; border: 1px solid var(--accent);
   background: var(--bg); outline: 0; font-size: 14px; unicode-bidi: plaintext; text-align: start;

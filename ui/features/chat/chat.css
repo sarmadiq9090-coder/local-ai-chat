@@ -12,6 +12,7 @@
 #main.is-empty #greeting { display: block; text-align: center; padding: 0 16px 22px; }
 #main.is-empty #examples { display: grid; }
 #main.is-empty .hint { display: none; }
+#main.is-empty #exportBtn { display: none; } /* exporter's button: nothing to export yet */
 #greeting h2 { margin: 0 0 8px; font-size: 30px; font-weight: 500; }
 #greeting p { margin: 0; color: var(--muted); font-size: 15px; }
 

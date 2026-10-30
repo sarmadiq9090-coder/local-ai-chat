@@ -19,6 +19,9 @@ export default {
     groupOlder: "أقدم",
     saveFailed: "تعذّر حفظ المحادثة: {error}",
     loadFailed: "تعذّر تحميل المحادثة: {error}",
+    corruptConv: "ملف تالف",
+    corruptConvHint: "ملف المحادثة تالف ولا يمكن فتحه — يمكنك حذفه",
+    corruptConvOpen: "ملف هذه المحادثة تالف ولا يمكن فتحه. يمكنك حذفه من القائمة.",
   },
   en: {
     newChat: "New chat",
@@ -36,5 +39,8 @@ export default {
     groupOlder: "Older",
     saveFailed: "Couldn't save the chat: {error}",
     loadFailed: "Couldn't load the chat: {error}",
+    corruptConv: "Corrupt file",
+    corruptConvHint: "This chat file is corrupt and can't be opened — you can delete it",
+    corruptConvOpen: "This chat's file is corrupt and can't be opened. You can delete it from the list.",
   },
 };

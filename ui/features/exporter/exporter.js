@@ -38,7 +38,8 @@ export function conversationToMarkdown(conv) {
 
 /** Safe file name from a title. Pure. */
 export const fileNameFor = title =>
-  (String(title || "chat").replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").trim().slice(0, 80) || "chat") + ".md";
+  // Trailing dots/spaces are dropped (Windows strips them anyway, and "Title." would give "Title..md").
+  (String(title || "chat").replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").trim().slice(0, 80).replace(/[.\s]+$/, "") || "chat") + ".md";
 
 /** Export the conversation and toast the saved path. */
 export async function exportConversation(conv) {
