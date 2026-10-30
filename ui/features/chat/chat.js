@@ -5,7 +5,7 @@
 // empty state with example prompts, smart auto-scroll and a scroll-to-bottom button.
 // Esc: stops a running generation.
 // Cross-feature deps: sidebar (persistConversation, titleFrom), models (supportsThinking),
-// exporter (fenceFor).
+// exporter (fenceFor), assistants (prepareAssistantTurn, sourcesEl: RAG turns + sources list).
 
 import { state, on, emit } from "../../core/state.js";
 import * as api from "../../core/api.js";
@@ -14,6 +14,7 @@ import { renderMarkdown } from "../../core/markdown.js";
 import { persistConversation, titleFrom } from "../sidebar/sidebar.js";
 import { supportsThinking } from "../models/models.js";
 import { fenceFor } from "../exporter/exporter.js";
+import { prepareAssistantTurn, sourcesEl } from "../assistants/assistants.js";
 import { icon } from "../../core/icons.js";
 import { t, registerStrings } from "../../core/i18n.js";
 import strings from "./strings.js";
@@ -162,6 +163,7 @@ function messageEl(m, index, conv, streaming = false) {
   const isLast = index === conv.messages.length - 1;
   return el("div", { class: "msg ai", dataset: { index } },
     body,
+    streaming ? null : sourcesEl(m.sources), // assistants: collapsible "Sources" list
     streaming ? null : el("div", { class: "actions" },
       m.content ? iconButton("copy", t("copy"), e => copyWithFeedback(e.currentTarget, m.content)) : null,
       isLast ? iconButton("refresh", t("regenerate"), regenerate) : null,
@@ -341,6 +343,7 @@ export async function send(presetText) {
   let conv = state.current;
   const isNew = !conv;
   if (isNew) conv = createConversation();
+  if (isNew && state.assistantId) conv.assistant_id = state.assistantId; // assistants: bind the new chat
   if (state.editIndex != null && !isNew) conv.messages = conv.messages.slice(0, state.editIndex);
   state.editIndex = null;
   $("#editBar").hidden = true;
@@ -414,6 +417,16 @@ async function generate(conv) {
   };
 
   try {
+    // Assistants (RAG): retrieve knowledge and use the assistant's system prompt/model (features/assistants).
+    const rag = conv.assistant_id ? await prepareAssistantTurn(conv, controller.signal) : null;
+    if (rag) {
+      payload.messages = buildChatMessages(conv.messages, rag.system); // the empty `ai` is skipped
+      if (rag.model) {
+        payload.model = ai.model = conv.model = rag.model;
+        payload.think = supportsThinking(rag.model) ? !!s.think : undefined;
+      }
+      if (rag.sources.length) ai.sources = rag.sources;
+    }
     for await (const chunk of api.chatStream(payload, controller.signal)) {
       if (chunk.message) {
         ai.content += chunk.message.content || "";

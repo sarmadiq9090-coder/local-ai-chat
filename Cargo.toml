@@ -13,7 +13,7 @@ categories = ["gui"]
 
 [dependencies]
 anyhow = "1.0.104"
-axum = "0.8.9"
+axum = { version = "0.8.9", features = ["multipart"] }
 dirs = "7.0.0"
 futures-util = "0.3.34"
 mime_guess = "2.0.5"

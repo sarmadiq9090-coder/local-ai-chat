@@ -11,9 +11,6 @@
 //! Mutations of one assistant are serialized by a per-assistant async lock;
 //! searches read the cached index without taking it.
 
-// Until routes are wired.
-#![allow(dead_code)]
-
 pub mod chunk;
 pub mod embed;
 pub mod extract;
@@ -21,7 +18,7 @@ pub mod index;
 pub mod types;
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, bail};
@@ -30,7 +27,6 @@ use tokio::sync::{Mutex, RwLock};
 use crate::config::write_atomic;
 use crate::storage::ConversationStore;
 
-#[allow(unused_imports)] // re-exported for the routes layer
 pub use embed::ModelMissing;
 pub use types::*;
 
@@ -494,11 +490,6 @@ impl AssistantStore {
             })
             .take(k)
             .collect())
-    }
-
-    /// Base directory (for diagnostics).
-    pub fn dir(&self) -> &Path {
-        &self.inner.dir
     }
 }
 

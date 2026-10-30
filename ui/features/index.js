@@ -21,6 +21,7 @@ import settings from "./settings/settings.js";
 import status from "./status/status.js";
 import exporter from "./exporter/exporter.js";
 import code from "./code/code.js";
+import assistants from "./assistants/assistants.js";
 import update from "./update/update.js";
 
 export default [
@@ -33,5 +34,6 @@ export default [
   status,
   exporter,
   code,
+  assistants,
   update,
 ];

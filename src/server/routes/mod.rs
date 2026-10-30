@@ -8,6 +8,7 @@ use axum::Router;
 
 use super::AppState;
 
+mod assistants;
 mod conversations;
 mod export;
 mod settings;
@@ -22,5 +23,6 @@ pub fn router() -> Router<AppState> {
         .merge(conversations::router())
         .merge(export::router())
         .merge(system::router())
+        .merge(assistants::router())
         .merge(update::router())
 }

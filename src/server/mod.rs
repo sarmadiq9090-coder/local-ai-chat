@@ -15,6 +15,7 @@ use std::sync::{Arc, mpsc};
 use axum::{Router, extract::DefaultBodyLimit, middleware};
 use tokio::sync::{OnceCell, RwLock};
 
+use crate::assistants::AssistantStore;
 use crate::config::{Paths, Settings};
 use crate::ollama::Ollama;
 use crate::storage::ConversationStore;
@@ -29,6 +30,8 @@ pub struct AppState {
     pub ollama: Ollama,
     /// Hardware summary, probed once on first use.
     pub system: Arc<OnceCell<SystemInfo>>,
+    /// Custom assistants + knowledge bases (RAG).
+    pub assistants: AssistantStore,
 }
 
 impl AppState {
@@ -49,10 +52,12 @@ impl AppState {
 
 /// Run the server on `port` (0 = any free port); the bound port is sent on `port_tx`.
 pub async fn run(paths: Paths, port: u16, port_tx: mpsc::Sender<u16>) -> anyhow::Result<()> {
+    let ollama = Ollama::new();
     let state = AppState {
         settings: Arc::new(RwLock::new(Settings::load(&paths.settings_file))),
         store: ConversationStore::new(&paths.conversations_dir),
-        ollama: Ollama::new(),
+        assistants: AssistantStore::new(paths.assistants_dir.clone(), ollama.http().clone()),
+        ollama,
         system: Arc::new(OnceCell::new()),
         paths,
     };

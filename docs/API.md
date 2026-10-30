@@ -73,6 +73,55 @@ type Message = {
 Unknown extra fields on `Conversation` / `Message` must be preserved by the backend (it stores them as-is),
 so the UI can add new fields without backend changes.
 
+## Custom assistants (RAG) — `/api/app/assistants/...`
+
+Implemented in `src/server/routes/assistants.rs` on top of `src/assistants/` (spec: `docs/specs/assistants.md`).
+Stored under `%APPDATA%\LocalAiChat\assistants\{id}\` (`assistant.json`, `docs/{doc_id}.txt`, `index.json`).
+Errors: unknown assistant/document → **404**; invalid id / empty name / bad upload → **400**;
+embedding model not installed in Ollama → **424** `{ "error": string, "missing_model": string }`.
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/api/app/assistants` | – | `Assistant[]`, newest `updated_at` first (no index) |
+| POST | `/api/app/assistants` | `NewAssistant` | `Assistant` |
+| GET | `/api/app/assistants/{id}` | – | `Assistant & { index: IndexStatus }` |
+| PUT | `/api/app/assistants/{id}` | `AssistantPatch` (only present fields change; `model: null` clears it) | `Assistant`. Changing `embed_model` makes the index stale → call `/reindex` |
+| DELETE | `/api/app/assistants/{id}` | – | `{ "ok": true }` — removes all its documents and index (missing is fine) |
+| POST | `/api/app/assistants/{id}/docs` | `multipart/form-data` with one or more file fields **or** JSON `{ name, text }` (a note) | NDJSON stream (see below); per document a final `{ doc: DocMeta }` or `{ error, name, missing_model? }` |
+| GET | `/api/app/assistants/{id}/docs/{doc_id}` | – | `{ text: string }` — extracted plain text (e.g. to edit a note) |
+| DELETE | `/api/app/assistants/{id}/docs/{doc_id}` | – | `{ "ok": true }` (its chunks are removed) |
+| POST | `/api/app/assistants/{id}/reindex` | – | NDJSON stream; final `{ assistant: Assistant }` or `{ error, missing_model? }` |
+| POST | `/api/app/assistants/{id}/search` | `{ query: string, k?: number }` (k default 5, max 50) | `{ results: SearchResult[] }` — `[]` when nothing passes the score threshold |
+
+File uploads accept `txt md csv json xml yml yaml toml html css js ts py rs go java c cpp h cs php rb sh ps1 sql ini log pdf`
+(other extensions → 400 before streaming). Files in one upload are indexed one after another.
+
+NDJSON progress lines: `{ "status": "extracting" | "embedding" | "saving", "done": number, "total": number }`.
+Final lines carry no `status`. HTTP status is 200 once streaming starts; failures arrive as `{error}` lines.
+
+```ts
+type Assistant = {
+  id: string; name: string; icon: string /* emoji, default "🤖" */; description: string;
+  instructions: string;
+  model: string | null;      // preferred chat model; null = the app's current model
+  strict: boolean;           // default true: answer only from the knowledge
+  embed_model: string;       // default "bge-m3"
+  created_at: number; updated_at: number; // unix ms
+  docs: DocMeta[];
+};
+type DocMeta = { id: string; name: string; kind: "file" | "note"; size: number /* bytes */; chunks: number; added_at: number };
+type NewAssistant = { name: string; icon?: string; description?: string; instructions?: string;
+                      model?: string; strict?: boolean; embed_model?: string };
+type AssistantPatch = Partial<Omit<NewAssistant, "model">> & { model?: string | null };
+type IndexStatus = { embed_model: string; dim: number; chunks: number; stale: boolean /* re-index needed */ };
+type SearchResult = { doc_id: string; doc_name: string; text: string; score: number };
+```
+
+Conversation/message fields used by assistants (stored as unknown extra fields):
+`Conversation.assistant_id?: string` (the chat belongs to an assistant) and
+`Message.sources?: { n: number; doc_name: string; snippet: string; score: number }[]` (assistant replies:
+the numbered passages given to the model, `n` matches the `[n]` citations).
+
 ## Auto-update — `/api/app/update/...`
 
 Implemented in `src/server/routes/update.rs` + `src/update.rs` (spec: `docs/specs/auto-update.md`).
