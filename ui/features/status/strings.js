@@ -13,5 +13,14 @@ export default {
     startFailed: "تعذّر تشغيل Ollama. تأكد من تثبيته.",
     backendDown: "تعذّر الاتصال بالخادم المحلي",
   },
-  en: {},
+  en: {
+    statusConnected: "Connected",
+    statusConnecting: "Connecting…",
+    ollamaDown: "Ollama isn't running",
+    ollamaDownBanner: "The Ollama service isn't running, so chatting isn't possible right now.",
+    startOllama: "Start Ollama",
+    startingOllama: "Starting…",
+    startFailed: "Couldn't start Ollama. Make sure it is installed.",
+    backendDown: "Can't reach the local server",
+  },
 };

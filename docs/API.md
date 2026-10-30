@@ -37,6 +37,9 @@ type Settings = {
   theme: "dark" | "light" | "system"; // default "dark"
   default_model: string | null;
   think: boolean;            // default false
+  language: "ar" | "en";     // UI language, default "ar" (unknown → "ar"). While system_prompt
+                             // equals the other language's built-in default it is swapped to this
+                             // language's default on save; a custom prompt is never changed.
 };
 
 // GPUs: NVIDIA VRAM from nvidia-smi; other adapters from WMI + the driver's registry

@@ -65,18 +65,26 @@ pub struct Settings {
     pub theme: Theme,
     pub default_model: Option<String>,
     pub think: bool,
+    /// UI language: "ar" (default) or "en". Unknown values become "ar".
+    pub language: String,
 }
+
+/// Default system prompts per UI language. A prompt still equal to one of these
+/// follows the language when it changes; a custom prompt is never touched.
+pub const DEFAULT_PROMPT_AR: &str = "أنت مساعد ذكي ومفيد. أجب دائمًا بنفس لغة المستخدم؛ إذا كتب بالعربية فأجب بعربية فصحى واضحة. ضع أي كود داخل كتل ``` مع اسم اللغة.";
+pub const DEFAULT_PROMPT_EN: &str = "You are a helpful, smart assistant. Always reply in the user's language; if they write in English, answer in clear, natural English. Put any code inside ``` blocks with the language name.";
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
             ollama_url: "http://127.0.0.1:11434".into(),
-            system_prompt: "أنت مساعد ذكي ومفيد. أجب دائمًا بنفس لغة المستخدم؛ إذا كتب بالعربية فأجب بعربية فصحى واضحة. ضع أي كود داخل كتل ``` مع اسم اللغة.".into(),
+            system_prompt: DEFAULT_PROMPT_AR.into(),
             temperature: 0.7,
             num_ctx: 8192,
             theme: Theme::Dark,
             default_model: None,
             think: false,
+            language: "ar".into(),
         }
     }
 }
@@ -101,6 +109,14 @@ impl Settings {
         if self.ollama_url.is_empty() {
             self.ollama_url = Settings::default().ollama_url;
         }
+        if self.language != "en" {
+            self.language = "ar".into();
+        }
+        // Keep the built-in prompt in the UI language; never touch a custom one.
+        let (own, other) = if self.language == "en" { (DEFAULT_PROMPT_EN, DEFAULT_PROMPT_AR) } else { (DEFAULT_PROMPT_AR, DEFAULT_PROMPT_EN) };
+        if self.system_prompt.trim() == other {
+            self.system_prompt = own.into();
+        }
         self
     }
 }
@@ -117,4 +133,27 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
         let _ = std::fs::remove_file(&tmp);
     })?;
     Ok(())
+}
+
+#[cfg(test)]
+mod language_tests {
+    use super::*;
+
+    #[test]
+    fn language_defaults_and_sanitizes() {
+        let s: Settings = serde_json::from_str(r#"{"theme":"light"}"#).unwrap();
+        assert_eq!(s.language, "ar");
+        let s: Settings = serde_json::from_str(r#"{"language":"fr"}"#).unwrap();
+        assert_eq!(s.sanitized().language, "ar");
+    }
+
+    #[test]
+    fn default_prompt_follows_language_custom_kept() {
+        let s = Settings { language: "en".into(), ..Default::default() }.sanitized();
+        assert_eq!(s.system_prompt, DEFAULT_PROMPT_EN);
+        let s = Settings { language: "ar".into(), ..s }.sanitized();
+        assert_eq!(s.system_prompt, DEFAULT_PROMPT_AR);
+        let s = Settings { language: "en".into(), system_prompt: "custom".into(), ..Default::default() }.sanitized();
+        assert_eq!(s.system_prompt, "custom");
+    }
 }

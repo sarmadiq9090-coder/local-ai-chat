@@ -1,25 +1,40 @@
-// settings.js — app settings: load/save via /api/app/settings, theme application,
-// and the settings modal (system prompt, temperature, context length, theme,
-// Ollama URL). Emits "settings" after every change and "ollama-url-changed"
+// settings.js — app settings: load/save via /api/app/settings, theme and UI
+// language application, and the settings modal (language, system prompt,
+// temperature, context length, theme, Ollama URL). Emits "settings" after every change and "ollama-url-changed"
 // when the Ollama address is edited. Owns the sidebar "settings" button.
 // Other features wait for `settingsLoaded` before using state.settings at startup.
 
 import { state, emit } from "../../core/state.js";
 import * as api from "../../core/api.js";
 import { $, el, openModal, toast } from "../../core/dom.js";
-import { t, registerStrings } from "../../core/i18n.js";
+import { t, registerStrings, setLanguage, getLanguage } from "../../core/i18n.js";
 import strings from "./strings.js";
 
 registerStrings("settings", strings);
 
+/** Built-in system prompts per UI language (must match config.rs DEFAULT_PROMPT_*). */
+export const DEFAULT_PROMPTS = {
+  ar: "أنت مساعد ذكي ومفيد. أجب دائمًا بنفس لغة المستخدم؛ إذا كتب بالعربية فأجب بعربية فصحى واضحة. ضع أي كود داخل كتل ``` مع اسم اللغة.",
+  en: "You are a helpful, smart assistant. Always reply in the user's language; if they write in English, answer in clear, natural English. Put any code inside ``` blocks with the language name.",
+};
+
+/** A prompt still equal to a built-in default follows the language; custom ones are kept. Pure. */
+export function promptForLanguage(prompt, lang) {
+  const isDefault = Object.values(DEFAULT_PROMPTS).includes(String(prompt ?? "").trim());
+  return isDefault ? DEFAULT_PROMPTS[lang] ?? DEFAULT_PROMPTS.ar : prompt;
+}
+
+const LANGUAGES = [["ar", "العربية"], ["en", "English"]]; // endonyms: readable in either UI language
+
 export const DEFAULT_SETTINGS = {
   ollama_url: "http://127.0.0.1:11434",
-  system_prompt: "أنت مساعد ذكي ومفيد. أجب دائمًا بنفس لغة المستخدم؛ إذا كتب بالعربية فأجب بعربية فصحى واضحة. ضع أي كود داخل كتل ``` مع اسم اللغة.",
+  system_prompt: DEFAULT_PROMPTS.ar,
   temperature: 0.7,
   num_ctx: 8192,
   theme: "dark",
   default_model: null,
   think: false,
+  language: "ar",
 };
 
 const CTX_OPTIONS = [2048, 4096, 8192, 16384, 32768];
@@ -45,6 +60,7 @@ export async function loadSettings() {
   try { s = (await api.getSettings()) || {}; } catch (e) { console.warn("settings load failed", e); }
   state.settings = { ...DEFAULT_SETTINGS, ...s };
   applyTheme(state.settings.theme);
+  setLanguage(state.settings.language);
   emit("settings");
   markLoaded();
   return state.settings;
@@ -67,6 +83,7 @@ export async function saveSettings(patch) {
     throw e;
   } finally {
     applyTheme(state.settings.theme);
+    setLanguage(state.settings.language);
     emit("settings");
   }
   return state.settings;
@@ -75,9 +92,12 @@ export async function saveSettings(patch) {
 const field = (label, control, extra) =>
   el("label", { class: "field" }, el("span", { class: "field-label" }, label, extra), control);
 
-/** Open the settings dialog. */
-export function openSettings() {
-  const s = state.settings || DEFAULT_SETTINGS;
+/**
+ * Open the settings dialog. `draft` (unsaved field values) is used when the
+ * dialog rebuilds itself after a live language switch.
+ */
+export function openSettings(draft) {
+  const s = { ...(state.settings || DEFAULT_SETTINGS), ...(draft || {}) };
 
   const prompt = el("textarea", { rows: 6, dir: "auto", class: "input" });
   prompt.value = s.system_prompt || "";
@@ -101,7 +121,27 @@ export function openSettings() {
   const url = el("input", { type: "url", class: "input", dir: "ltr", spellcheck: false });
   url.value = s.ollama_url || DEFAULT_SETTINGS.ollama_url;
 
+  const language = el("select", { class: "input" },
+    LANGUAGES.map(([code, name]) => el("option", { value: code, lang: code, dir: code === "ar" ? "rtl" : "ltr" }, name)));
+  language.value = getLanguage();
+  // Live switch: apply the language, then rebuild the dialog in it, keeping unsaved edits.
+  language.addEventListener("change", () => {
+    const next = language.value;
+    const values = {
+      system_prompt: promptForLanguage(prompt.value, next),
+      temperature: Number(temp.value),
+      num_ctx: Number(ctx.value),
+      theme: theme.value,
+      ollama_url: url.value,
+    };
+    rebuilding = true;
+    m.close(true);
+    setLanguage(next);
+    openSettings(values);
+  });
+
   let saved = false;
+  let rebuilding = false;
   const saveBtn = el("button", { class: "btn primary", type: "button" }, t("save"));
   const cancelBtn = el("button", { class: "btn", type: "button", onclick: () => m.close() }, t("cancel"));
 
@@ -114,6 +154,7 @@ export function openSettings() {
         temperature: Number(temp.value),
         num_ctx: Number(ctx.value),
         theme: theme.value,
+        language: language.value,
         ollama_url: url.value.trim() || DEFAULT_SETTINGS.ollama_url,
       });
       saved = true;
@@ -129,6 +170,7 @@ export function openSettings() {
     title: t("settingsTitle"),
     className: "settings",
     body: el("div", { class: "form" },
+      field(t("language"), language),
       field(t("systemPrompt"), prompt),
       field(t("temperature"), el("div", { class: "range-row" }, temp, tempOut)),
       el("div", { class: "field-row" },
@@ -136,12 +178,16 @@ export function openSettings() {
         field(t("theme"), theme)),
       field(t("ollamaUrl"), url)),
     actions: [cancelBtn, saveBtn],
-    onClose: () => { if (!saved) applyTheme(state.settings?.theme); }, // undo live preview
+    onClose: () => { // undo live previews
+      if (saved || rebuilding) return;
+      applyTheme(state.settings?.theme);
+      setLanguage(state.settings?.language);
+    },
   });
 }
 
 export default {
   name: "settings",
-  init() { $("#openSettings").addEventListener("click", openSettings); },
+  init() { $("#openSettings").addEventListener("click", () => openSettings()); },
   start: loadSettings,
 };

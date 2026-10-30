@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark light">
 <title data-i18n="appTitle">الذكاء المحلي</title>
+<!-- Apply the last UI language before first paint (no RTL flash for English users). -->
+<script>try { if (localStorage.getItem("ui.lang") === "en") { document.documentElement.lang = "en"; document.documentElement.dir = "ltr"; document.title = "Local AI Chat"; } } catch (e) {}</script>
 <!-- Styles: core first, then one line per feature (features/<name>/<name>.css). -->
 <link rel="stylesheet" href="core/base.css">
 <link rel="stylesheet" href="features/sidebar/sidebar.css">
@@ -19,7 +21,7 @@
 </head>
 <body>
 
-<aside id="side" aria-label="المحادثات">
+<aside id="side" aria-label="المحادثات" data-i18n-aria-label="conversationsLabel">
   <div class="side-head">
     <button id="sideToggle" class="icon-btn" type="button" data-i18n-title="toggleSidebar"><span data-icon="sidebar" data-size="20"></span></button>
     <span class="brand" data-i18n="appTitle"></span>

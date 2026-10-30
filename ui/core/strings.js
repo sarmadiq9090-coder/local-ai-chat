@@ -6,6 +6,7 @@
 export default {
   ar: {
     appTitle: "الذكاء المحلي",
+    conversationsLabel: "المحادثات",
     untitled: "محادثة جديدة",
     delete: "حذف",
     copy: "نسخ",
@@ -18,5 +19,19 @@ export default {
     fileHeader: "ملف",
     confirm: "تأكيد",
   },
-  en: {},
+  en: {
+    appTitle: "Local AI Chat",
+    conversationsLabel: "Conversations",
+    untitled: "New chat",
+    delete: "Delete",
+    copy: "Copy",
+    run: "Run",
+    runPreview: "Run the code in the preview panel",
+    copied: "Copied",
+    copyFailed: "Couldn't copy",
+    cancel: "Cancel",
+    busy: "Wait for the reply to finish, or stop it first",
+    fileHeader: "File",
+    confirm: "Confirm",
+  },
 };

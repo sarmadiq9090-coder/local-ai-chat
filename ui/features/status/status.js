@@ -14,6 +14,9 @@ import strings from "./strings.js";
 
 registerStrings("status", strings);
 
+let connecting = false; // a status request is in flight
+let checked = false;    // at least one status request has finished
+
 function showBanner(show) {
   $("#banner").hidden = !show;
 }
@@ -21,15 +24,20 @@ function showBanner(show) {
 /** Ask the backend whether Ollama is up; load models or show the start banner. */
 export async function checkStatus() {
   setStatus(t("statusConnecting"));
+  connecting = true;
   let status;
   try {
     status = await api.getStatus();
   } catch {
+    connecting = false;
+    checked = true;
     state.status = null;
     setStatus(t("backendDown"), "err");
     showBanner(false);
     return;
   }
+  connecting = false;
+  checked = true;
   state.status = status;
   if (status?.ollama) {
     showBanner(false);
@@ -59,6 +67,19 @@ async function pollUntilUp() {
   }
 }
 
+/** Re-render the status line from the last known status (after a language switch). */
+function renderStatusText() {
+  const s = state.status;
+  if (connecting) setStatus(t("statusConnecting"));
+  else if (!checked) { /* nothing shown yet */ }
+  else if (!s) setStatus(t("backendDown"), "err");
+  else if (!s.ollama) setStatus(t("ollamaDown"), "err");
+  else if (!state.models.length) setStatus(t("noModels"), "err");
+  else setStatus(t("statusConnected") + (s.version ? ` · Ollama ${s.version}` : ""), "ok");
+  const btn = $("#startOllama");
+  if (btn.disabled) btn.textContent = t("startingOllama");
+}
+
 async function startOllama() {
   const btn = $("#startOllama");
   btn.disabled = true;
@@ -80,6 +101,7 @@ export default {
   init() {
     $("#startOllama").addEventListener("click", startOllama);
     on("ollama-url-changed", checkStatus);
+    on("language", renderStatusText);
   },
   // Models depend on settings.default_model, so wait for settings first.
   async start() {

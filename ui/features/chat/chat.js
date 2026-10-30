@@ -90,6 +90,13 @@ export function initChat() {
   on("current-title", renderTitle);
   on("streaming", updateSendButton);
   on("focus-composer", () => inputEl.focus());
+  on("language", () => {
+    renderExamples();
+    updateSendButton();
+    // Re-render messages (code-block buttons, action tooltips) unless a reply is streaming.
+    if (state.streaming) renderTitle();
+    else { const top = msgsEl.scrollTop; renderConversation(); msgsEl.scrollTop = top; }
+  });
 
   renderConversation();
   updateSendButton();

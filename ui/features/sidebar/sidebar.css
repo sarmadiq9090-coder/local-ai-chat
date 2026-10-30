@@ -32,6 +32,7 @@ body.side-collapsed #side { margin-inline-start: -264px; }
 .conv-title { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; unicode-bidi: plaintext; text-align: start; }
 /* keep the list visually aligned to the UI side even for Latin titles */
 [dir="rtl"] .conv-title { text-align: right; }
+[dir="ltr"] .conv-title { text-align: left; }
 .conv-del { width: 28px; height: 28px; visibility: hidden; }
 .conv:hover .conv-del, .conv.active .conv-del { visibility: visible; }
 .conv-del:hover { color: var(--danger); }

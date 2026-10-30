@@ -8,13 +8,13 @@
 // status feature once Ollama is reachable.
 // Cross-feature deps: settings (saveSettings).
 
-import { state, emit } from "../../core/state.js";
+import { state, emit, on } from "../../core/state.js";
 import * as api from "../../core/api.js";
 import { $, el, iconButton, openModal, confirmDialog, toast, setStatus } from "../../core/dom.js";
 import { saveSettings } from "../settings/settings.js";
 import { icon } from "../../core/icons.js";
 import { t, registerStrings } from "../../core/i18n.js";
-import { CATALOG, CATEGORIES, LEVELS, rateModel, discreteGpus } from "./catalog.js";
+import { CATALOG, CATEGORIES, LEVELS, rateModel, discreteGpus, describe } from "./catalog.js";
 import strings from "./strings.js";
 
 registerStrings("models", strings);
@@ -37,6 +37,7 @@ export function initModels() {
   $("#openModels").addEventListener("click", openModelManager);
   renderModelButton();
   updateThinkToggle();
+  on("language", () => { closeModelMenu(); renderModelButton(); updateThinkToggle(); });
 }
 
 /** Fetch installed models, rebuild the picker and pick settings.default_model. */
@@ -267,7 +268,7 @@ function suggestionPicker(input) {
       el("div", { class: "suggest-head" },
         el("span", { class: "model-name", dir: "ltr" }, m.name),
         r && el("span", { class: "suggest-badge" }, r.label)),
-      el("p", { class: "suggest-desc" }, m.desc),
+      el("p", { class: "suggest-desc" }, describe(m)),
       el("div", { class: "suggest-facts" },
         fact(t("suggestSize"), `${m.sizeGb} GB`),
         fact(t("suggestParams"), m.params),

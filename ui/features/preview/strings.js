@@ -13,5 +13,14 @@ export default {
     fixPrompt: "ظهرت هذه الأخطاء عند تشغيل الكود. صلّحها وأعطني الكود كاملًا بعد الإصلاح:\n\n```\n{errors}\n```",
     consoleTitle: "مخرجات الكونسول",
   },
-  en: {},
+  en: {
+    preview: "Preview",
+    reload: "Run again",
+    maximize: "Maximize/restore",
+    close: "Close",
+    previewErrors: "{count} error(s) in the code",
+    fixErrors: "Ask for a fix",
+    fixPrompt: "These errors appeared when running the code. Fix them and give me the complete code after the fix:\n\n```\n{errors}\n```",
+    consoleTitle: "Console output",
+  },
 };

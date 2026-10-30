@@ -65,6 +65,7 @@ export function initSidebar() {
   MOBILE.addEventListener?.("change", closeMobileSidebar);
   on("conversations", render);
   on("current", render);
+  on("language", render);
   document.addEventListener("keydown", e => {
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "n") {
       e.preventDefault(); // also blocks WebView2's "new window"

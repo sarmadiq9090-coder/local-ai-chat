@@ -7,6 +7,7 @@
 // data-i18n-placeholder / data-i18n-title attributes via translateDom().
 
 import coreStrings from "./strings.js";
+import { emit } from "./state.js";
 
 const FALLBACK = "ar";
 const dictionaries = { ar: {}, en: {} }; // lang -> merged { key: string }
@@ -30,9 +31,30 @@ export function registerStrings(featureName, strings) {
   }
 }
 
-/** Switch the active language (unknown codes fall back to Arabic). */
+const LANG_KEY = "ui.lang"; // last language, so startup can apply it before settings load
+
+/** Set <html lang/dir> for `code` (rtl for Arabic, ltr otherwise). */
+function applyDocumentLanguage(code) {
+  document.documentElement.lang = code;
+  document.documentElement.dir = code === "ar" ? "rtl" : "ltr";
+}
+
+/** The active language code ("ar" | "en"). */
+export const getLanguage = () => lang;
+
+/**
+ * Switch the active language (unknown codes fall back to Arabic): sets
+ * <html lang/dir>, re-translates static markup and emits "language" so
+ * features re-render their dynamic text. No-op if already active.
+ */
 export function setLanguage(code) {
-  lang = code in dictionaries ? code : FALLBACK;
+  const next = code in dictionaries && code !== "" ? code : FALLBACK;
+  try { localStorage.setItem(LANG_KEY, next); } catch { /* storage unavailable */ }
+  if (next === lang && document.documentElement.lang === next) return;
+  lang = next;
+  applyDocumentLanguage(lang);
+  translateDom();
+  emit("language", lang);
 }
 
 /** Look up a string; `{name}` placeholders are filled from `vars`. */
@@ -53,6 +75,14 @@ export function translateDom(root = document) {
     n.title = t(n.dataset.i18nTitle);
     n.setAttribute("aria-label", n.title);
   });
+  root.querySelectorAll("[data-i18n-aria-label]").forEach(n => { n.setAttribute("aria-label", t(n.dataset.i18nAriaLabel)); });
 }
 
 registerStrings("core", coreStrings);
+
+// Startup: use the last language before settings arrive (index.html sets dir/lang
+// even earlier, before first paint); settings.js calls setLanguage() once loaded.
+try {
+  const saved = localStorage.getItem(LANG_KEY);
+  if (saved && saved in dictionaries) { lang = saved; applyDocumentLanguage(lang); }
+} catch { /* storage unavailable */ }

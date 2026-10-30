@@ -10,5 +10,11 @@ export default {
     exportFailed: "فشل التصدير: {error}",
     you: "أنت",
   },
-  en: {},
+  en: {
+    export: "Export conversation",
+    exported: "Saved to: {path}",
+    exportEmpty: "There are no messages to export",
+    exportFailed: "Export failed: {error}",
+    you: "You",
+  },
 };

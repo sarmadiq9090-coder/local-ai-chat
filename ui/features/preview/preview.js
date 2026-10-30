@@ -11,7 +11,7 @@ import { $, el, iconButton } from "../../core/dom.js";
 import { t, registerStrings } from "../../core/i18n.js";
 import { icon } from "../../core/icons.js";
 import { send } from "../chat/chat.js";
-import { state } from "../../core/state.js";
+import { state, on } from "../../core/state.js";
 import strings from "./strings.js";
 
 registerStrings("preview", strings);
@@ -90,6 +90,7 @@ export function initPreview() {
     el("summary", {}, t("consoleTitle")), consoleEl);
   panel.append(handle, head, frame, errorBar, drawer);
   $("#main").after(panel);
+  on("language", () => relabel(head, handle, drawer));
 
   installResize(handle);
   restoreWidth();
@@ -107,6 +108,19 @@ export function initPreview() {
     if (e.source !== frame.contentWindow || !e.data?.__preview) return;
     addLog(e.data.type, String(e.data.text ?? ""));
   });
+}
+
+/** Re-apply translated labels after a language switch. */
+function relabel(head, handle, drawer) {
+  panel.setAttribute("aria-label", t("preview"));
+  frame.title = t("preview");
+  handle.title = t("maximize");
+  head.querySelector(".preview-title > span:last-child").textContent = t("preview");
+  const [reload, max, close] = head.querySelectorAll(".icon-btn");
+  [[reload, "reload"], [max, "maximize"], [close, "close"]].forEach(([b, k]) => { b.title = t(k); b.setAttribute("aria-label", b.title); });
+  errorBar.querySelector(".btn span:last-child").textContent = t("fixErrors");
+  drawer.querySelector("summary").textContent = t("consoleTitle");
+  renderLogs();
 }
 
 function open() {
