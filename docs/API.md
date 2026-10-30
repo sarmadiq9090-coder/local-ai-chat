@@ -92,7 +92,11 @@ so the UI can add new fields without backend changes.
 Implemented in `src/server/routes/assistants.rs` on top of `src/assistants/` (spec: `docs/specs/assistants.md`).
 Stored under `%APPDATA%\LocalAiChat\assistants\{id}\` (`assistant.json`, `docs/{doc_id}.txt`, `index.json`).
 Errors: unknown assistant/document → **404**; invalid id / empty name / bad upload → **400**;
-embedding model not installed in Ollama → **424** `{ "error": string, "missing_model": string }`.
+embedding model not installed in Ollama → **424** `{ "error": string, "missing_model": string }`
+(`/docs` and `/reindex` check this via Ollama's `/api/tags` *before* streaming; if Ollama can't be
+asked, the stream reports it as an `{error, missing_model}` line instead);
+stale knowledge index on `/search` → **409** `{ "error": string, "code": "reindex_required" }`
+(built with another embed model or by an older chunker — call `/reindex`).
 Limits (checked before anything is embedded): at most **5 MB of extracted text per document** and
 **20,000 chunks per assistant**. An oversized note is rejected with **400** before streaming; an
 oversized file (known only after extraction) or a full knowledge base ends that document's stream
@@ -100,7 +104,7 @@ with `{ error: "document too large: …" | "knowledge base too large: …", name
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| GET | `/api/app/assistants` | – | `Assistant[]`, newest `updated_at` first (no index) |
+| GET | `/api/app/assistants` | – | `Assistant[]`, newest `updated_at` first (no index). A corrupt `assistant.json` is renamed to `assistant.json.corrupt-<unix ms>`, left out, and its id listed in the `X-Corrupt-Assistants` response header (comma-separated) |
 | POST | `/api/app/assistants` | `NewAssistant` | `Assistant` |
 | GET | `/api/app/assistants/{id}` | – | `Assistant & { index: IndexStatus }` |
 | PUT | `/api/app/assistants/{id}` | `AssistantPatch` (only present fields change; `model: null` clears it) | `Assistant`. Changing `embed_model` makes the index stale → call `/reindex` |
@@ -109,10 +113,12 @@ with `{ error: "document too large: …" | "knowledge base too large: …", name
 | GET | `/api/app/assistants/{id}/docs/{doc_id}` | – | `{ text: string }` — extracted plain text (e.g. to edit a note) |
 | DELETE | `/api/app/assistants/{id}/docs/{doc_id}` | – | `{ "ok": true }` (its chunks are removed) |
 | POST | `/api/app/assistants/{id}/reindex` | – | NDJSON stream; final `{ assistant: Assistant }` or `{ error, missing_model? }` |
-| POST | `/api/app/assistants/{id}/search` | `{ query: string, k?: number }` (k default 5, max 50) | `{ results: SearchResult[] }` — `[]` when nothing passes the score threshold |
+| POST | `/api/app/assistants/{id}/search` | `{ query: string, k?: number }` (k default 5, max 50) | `{ results: SearchResult[] }`, best first — `[]` when nothing passes the score threshold (0.42) or is within 0.15 of the best score; **409** `reindex_required` on a stale index |
 
-File uploads accept `txt md csv json xml yml yaml toml html css js ts py rs go java c cpp h cs php rb sh ps1 sql ini log pdf`
-(other extensions → 400 before streaming). Files in one upload are indexed one after another.
+File uploads accept `txt md csv json xml yml yaml toml html css js ts py rs go java c cpp h cs php rb sh ps1 sql ini log pdf`.
+Unsupported files in a multi-file upload are skipped with an `{ error: "unsupported file type: …", name }`
+line while the others are indexed; if no file is supported → 400 before streaming. Files in one upload
+are indexed one after another.
 
 NDJSON progress lines: `{ "status": "extracting" | "embedding" | "saving", "done": number, "total": number }`.
 Final lines carry no `status`. HTTP status is 200 once streaming starts; failures arrive as `{error}` lines.
@@ -127,11 +133,13 @@ type Assistant = {
   created_at: number; updated_at: number; // unix ms
   docs: DocMeta[];
 };
-type DocMeta = { id: string; name: string; kind: "file" | "note"; size: number /* bytes */; chunks: number; added_at: number };
+type DocMeta = { id: string; name: string; kind: "file" | "note"; size: number /* bytes */; chunks: number; added_at: number;
+                 warning?: "arabic_pdf_quality" /* Arabic PDF text had to be repaired and may be inaccurate */ };
 type NewAssistant = { name: string; icon?: string; description?: string; instructions?: string;
                       model?: string; strict?: boolean; embed_model?: string };
 type AssistantPatch = Partial<Omit<NewAssistant, "model">> & { model?: string | null };
-type IndexStatus = { embed_model: string; dim: number; chunks: number; stale: boolean /* re-index needed */ };
+type IndexStatus = { embed_model: string; dim: number; chunks: number;
+                     stale: boolean /* re-index needed: other embed model or older chunker (index.json "version" < 2) */ };
 type SearchResult = { doc_id: string; doc_name: string; text: string; score: number };
 ```
 

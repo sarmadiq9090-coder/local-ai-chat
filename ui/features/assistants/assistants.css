@@ -17,16 +17,37 @@
 .asst-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .asst-icon { font-size: 16px; line-height: 1; flex-shrink: 0; }
 .asst-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; unicode-bidi: plaintext; text-align: start; }
+/* User-written names keep their own direction but sit on the UI's side, next to their icon
+   (same convention as the sidebar's .conv-title). */
+:root[dir="rtl"] :is(.asst-name, .asst-doc-name, .asst-src-name) { text-align: right; }
+:root[dir="ltr"] :is(.asst-name, .asst-doc-name, .asst-src-name) { text-align: left; }
 .asst-edit { width: 28px; height: 28px; visibility: hidden; }
 .asst-item:hover .asst-edit, .asst-item.active .asst-edit, .asst-item:focus-within .asst-edit { visibility: visible; }
 
 /* ---------- top-bar chip ---------- */
 .asst-chip {
-  display: inline-flex; align-items: center; gap: 6px; max-inline-size: 180px; min-width: 0; flex-shrink: 0;
+  display: inline-flex; align-items: center; gap: 6px; max-inline-size: 30ch; min-width: 0; flex: 0 1 auto; overflow: hidden;
   padding: 5px 10px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
   background: color-mix(in srgb, var(--accent) 12%, transparent); font-size: 13px;
 }
 .asst-chip:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.asst-chip .asst-name { flex: 0 1 auto; max-inline-size: 16ch; }
+.asst-chip-model {
+  flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  color: var(--muted); font-size: 12px; max-inline-size: 14ch;
+}
+.asst-chip-model.missing { text-decoration: line-through; }
+
+/* ---------- empty state of an assistant chat (inside #examples) ---------- */
+.asst-welcome {
+  grid-column: 1 / -1; display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); border-radius: 14px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+.asst-welcome-icon { font-size: 26px; line-height: 1.2; flex-shrink: 0; }
+.asst-welcome-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.asst-welcome-name { font-weight: 600; font-size: 15px; unicode-bidi: plaintext; text-align: start; }
+.asst-welcome-desc { color: var(--muted); font-size: 14px; line-height: 1.6; unicode-bidi: plaintext; text-align: start; overflow-wrap: anywhere; }
 
 /* ---------- editor ---------- */
 .modal.asst-modal { max-width: 680px; }
@@ -44,7 +65,7 @@
 .asst-knowledge { display: flex; flex-direction: column; gap: 10px; border-block-start: 1px solid var(--line); padding-block-start: 14px; }
 .asst-k-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .asst-stale {
-  display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 8px 10px; border-radius: 10px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 13px; padding: 8px 10px; border-radius: 10px;
   color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 .asst-drop {
@@ -65,7 +86,11 @@
 .asst-doc { display: flex; align-items: center; gap: 8px; padding-inline: 8px 0; min-height: 38px; border-radius: 9px; font-size: 14px; }
 .asst-doc:hover { background: var(--hover); }
 .asst-doc-ic { color: var(--muted); display: inline-flex; }
-.asst-doc-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; unicode-bidi: plaintext; text-align: start; }
+.asst-stale-text { flex: 1; min-width: 12ch; }
+.asst-doc-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.asst-doc-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; unicode-bidi: plaintext; text-align: start; }
+.asst-doc-warn { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--danger); line-height: 1.4; }
+.asst-doc.has-warning { padding-block: 4px; }
 .asst-doc-meta { font-size: 12px; white-space: nowrap; }
 .asst-del { color: var(--danger); }
 .asst-del:hover:not(:disabled) { border-color: var(--danger); }
@@ -89,5 +114,6 @@
 }
 
 @media (max-width: 800px) {
-  .asst-chip { max-inline-size: 120px; }
+  .asst-chip { max-inline-size: 16ch; }
+  .asst-chip-model { display: none; }
 }

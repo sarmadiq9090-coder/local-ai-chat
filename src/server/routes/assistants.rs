@@ -2,9 +2,11 @@
 //! `docs/specs/assistants.md`.
 //!
 //! Errors: unknown assistant/document → 404, missing embedding model → 424
-//! `{error, missing_model}`, invalid input → 400. Document uploads and
-//! re-indexing stream NDJSON progress lines (`{status, done, total}`) and end
-//! with `{doc}` / `{assistant}` or `{error[, missing_model]}`.
+//! `{error, missing_model}` (also checked before an upload/re-index stream
+//! starts), stale index on search → 409 `{error, code: "reindex_required"}`,
+//! invalid input → 400. Document uploads and re-indexing stream NDJSON
+//! progress lines (`{status, done, total}`) and end with `{doc}` /
+//! `{assistant}` or `{error[, missing_model]}`.
 
 use axum::{
     Json, Router,
@@ -20,7 +22,7 @@ use tokio::sync::mpsc;
 
 use crate::assistants::{
     AssistantPatch, AssistantStore, DocInput, ModelMissing, NewAssistant, NotFound, Progress,
-    TooLarge, check_doc_text_size, extract,
+    ReindexRequired, TooLarge, check_doc_text_size, extract,
 };
 use crate::error::{ApiError, ApiResult};
 use crate::server::AppState;
@@ -55,12 +57,26 @@ fn map_err(e: anyhow::Error) -> ApiError {
 }
 
 /// 424 with `{error, missing_model}` so the UI can offer a pull.
-fn model_missing_response(e: &anyhow::Error) -> Option<Response> {
-    let mm = e.downcast_ref::<ModelMissing>()?;
+fn missing_model_json(model: &str) -> Response {
+    let mm = ModelMissing(model.to_string());
+    (
+        StatusCode::FAILED_DEPENDENCY,
+        Json(json!({ "error": mm.to_string(), "missing_model": mm.0 })),
+    )
+        .into_response()
+}
+
+/// Typed errors with a JSON body richer than `{error}`: 424 for a missing
+/// embedding model, 409 `{error, code: "reindex_required"}` for a stale index.
+fn typed_error_response(e: &anyhow::Error) -> Option<Response> {
+    if let Some(mm) = e.downcast_ref::<ModelMissing>() {
+        return Some(missing_model_json(&mm.0));
+    }
+    let rr = e.downcast_ref::<ReindexRequired>()?;
     Some(
         (
-            StatusCode::FAILED_DEPENDENCY,
-            Json(json!({ "error": mm.to_string(), "missing_model": mm.0 })),
+            StatusCode::CONFLICT,
+            Json(json!({ "error": rr.to_string(), "code": "reindex_required" })),
         )
             .into_response(),
     )
@@ -74,8 +90,17 @@ fn check_id(id: &str) -> ApiResult<()> {
     }
 }
 
-async fn list(State(s): State<AppState>) -> ApiResult<Json<Value>> {
-    Ok(Json(serde_json::to_value(s.assistants.list()?)?))
+/// `Assistant[]`. Unreadable `assistant.json` files are backed up and left
+/// out; their ids are listed in the `X-Corrupt-Assistants` header.
+async fn list(State(s): State<AppState>) -> ApiResult<Response> {
+    let list = s.assistants.list()?;
+    let mut resp = Json(serde_json::to_value(list.assistants)?).into_response();
+    if !list.corrupt.is_empty()
+        && let Ok(v) = header::HeaderValue::from_str(&list.corrupt.join(","))
+    {
+        resp.headers_mut().insert("x-corrupt-assistants", v);
+    }
+    Ok(resp)
 }
 
 /// The assistant plus `index` (`IndexStatus`: chunk count, stale flag).
@@ -190,7 +215,8 @@ struct NoteBody {
 
 /// Multipart file(s) (any field with a file name) or JSON `{name, text}` for a
 /// note. Files are indexed one after another; each ends with `{doc}` or
-/// `{error, name}`.
+/// `{error, name}`. Unsupported files among supported ones get an
+/// `{error, name}` line; if none is supported → 400.
 async fn add_docs(
     State(s): State<AppState>,
     Path(id): Path<String>,
@@ -207,6 +233,7 @@ async fn add_docs(
         .is_some_and(|ct| ct.starts_with("multipart/form-data"));
 
     let mut inputs: Vec<(String, DocInput)> = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
     if is_multipart {
         let mut mp = Multipart::from_request(req, &s)
             .await
@@ -220,9 +247,8 @@ async fn add_docs(
                 continue;
             };
             if !extract::is_supported(&name) {
-                return Err(ApiError::bad_request(format!(
-                    "unsupported file type: {name}"
-                )));
+                skipped.push(name);
+                continue;
             }
             let bytes = field
                 .bytes()
@@ -231,7 +257,10 @@ async fn add_docs(
             inputs.push((name, DocInput::File(bytes.to_vec())));
         }
         if inputs.is_empty() {
-            return Err(ApiError::bad_request("no files in the upload"));
+            return Err(ApiError::bad_request(match skipped.first() {
+                Some(name) => format!("unsupported file type: {name}"),
+                None => "no files in the upload".into(),
+            }));
         }
     } else {
         let Json(note) = Json::<NoteBody>::from_request(req, &s)
@@ -247,9 +276,17 @@ async fn add_docs(
         inputs.push((note.name, DocInput::Note(note.text)));
     }
 
-    let (tx, resp) = ndjson_channel();
     let url = s.ollama_url().await;
+    if let Some(model) = s.assistants.missing_embed_model(&url, &id).await {
+        return Ok(missing_model_json(&model));
+    }
+    let (tx, resp) = ndjson_channel();
     tokio::spawn(async move {
+        // Unsupported files in a multi-file upload are skipped, not fatal.
+        for name in skipped {
+            let e = anyhow::anyhow!("unsupported file type: {name}");
+            let _ = tx.send(error_line(&e, Some(&name)));
+        }
         for (name, input) in inputs {
             let ptx = tx.clone();
             let res = s
@@ -273,8 +310,11 @@ async fn reindex(State(s): State<AppState>, Path(id): Path<String>) -> ApiResult
     if s.assistants.get(&id)?.is_none() {
         return Err(ApiError::not_found("assistant not found"));
     }
-    let (tx, resp) = ndjson_channel();
     let url = s.ollama_url().await;
+    if let Some(model) = s.assistants.missing_embed_model(&url, &id).await {
+        return Ok(missing_model_json(&model));
+    }
+    let (tx, resp) = ndjson_channel();
     tokio::spawn(async move {
         let ptx = tx.clone();
         let res = s
@@ -307,7 +347,7 @@ async fn search(
     let url = s.ollama_url().await;
     match s.assistants.search(&url, &id, &body.query, body.k).await {
         Ok(results) => Ok(Json(json!({ "results": results })).into_response()),
-        Err(e) => match model_missing_response(&e) {
+        Err(e) => match typed_error_response(&e) {
             Some(r) => Ok(r),
             None => Err(map_err(e)),
         },

@@ -9,11 +9,38 @@ use std::collections::HashSet;
 
 use super::types::Index;
 
+/// Version of the chunking/index format. Bump it when [`super::chunk`] or the
+/// scoring changes in a way that needs new chunks: older indexes report
+/// `stale` and are rebuilt. 2 = structural chunker (v2.1.1).
+pub const INDEX_VERSION: u32 = 2;
+
 /// Default number of passages returned.
 pub const DEFAULT_K: usize = 5;
-/// Default minimum combined score.
-// Tuned on bge-m3: unrelated text scores ~0.35, same meaning across AR/EN ~0.88.
-pub const MIN_SCORE: f32 = 0.5;
+/// Default minimum combined score (cosine + keyword boost).
+///
+/// Tuned on `bge-m3` with `tests::retrieval_eval_live` (AR/EN questions vs an
+/// Arabic FAQ, an English handbook, a dense 550-char Arabic policy paragraph
+/// and an off-topic recipe, chunked by [`super::chunk`]). Best scores:
+///
+/// | question → knowledge                         | relevant | best other |
+/// |----------------------------------------------|----------|------------|
+/// | AR → AR FAQ («ما هي سياسة الإرجاع؟»)          | 0.71–0.81 | ≤ 0.56    |
+/// | EN → AR FAQ ("What is the return policy?")   | 0.65–0.67 | ≤ 0.54    |
+/// | AR → EN handbook («كم بدل النقل الشهري؟»)     | 0.61–0.69 | ≤ 0.67    |
+/// | EN → EN handbook                             | 0.80–0.82 | ≤ 0.57    |
+/// | EN → dense AR paragraph ("overtime rate?")   | 0.50–0.60 | ≤ 0.64    |
+/// | unrelated (capital of France, World Cup, poem)| –        | 0.27–0.38 |
+/// | near-miss (chocolate cake, dollar rate)       | –        | 0.43–0.45 |
+///
+/// The old single-chunk-per-file index scored the same questions 0.43–0.49,
+/// which the former 0.5 threshold rejected. 0.42 keeps every relevant hit
+/// with margin and drops clearly unrelated questions; near-misses may pass,
+/// and in strict mode the model then answers "not in knowledge".
+pub const MIN_SCORE: f32 = 0.42;
+/// Results scoring more than this below the best result are dropped, so a
+/// clear hit isn't padded with loosely related chunks (same size as the
+/// maximum keyword boost, so a boosted hit can't push out a semantic one).
+pub const RELATIVE_WINDOW: f32 = 0.15;
 /// Score added when every query keyword appears in the chunk (scaled by the
 /// fraction of keywords found).
 pub const KEYWORD_BOOST: f32 = 0.15;
@@ -87,15 +114,24 @@ pub fn top_k(
     min_score: f32,
 ) -> Vec<(usize, f32)> {
     let qkw = keywords(query);
-    let mut scored: Vec<(usize, f32)> = index
+    let scored: Vec<(usize, f32)> = index
         .chunks
         .iter()
         .enumerate()
         .filter(|(_, c)| c.vec.len() == query_vec.len())
         .map(|(i, c)| (i, dot(&c.vec, query_vec) + keyword_boost(&qkw, &c.text)))
-        .filter(|&(_, s)| s >= min_score)
         .collect();
+    top_k_from(scored, k, min_score)
+}
+
+/// Best first; keep at most `k` with `score >= min_score` and within
+/// [`RELATIVE_WINDOW`] of the best score.
+pub fn top_k_from(mut scored: Vec<(usize, f32)>, k: usize, min_score: f32) -> Vec<(usize, f32)> {
+    scored.retain(|&(_, s)| s >= min_score);
     scored.sort_by(|a, b| b.1.total_cmp(&a.1));
+    if let Some(&(_, best)) = scored.first() {
+        scored.retain(|&(_, s)| s >= best - RELATIVE_WINDOW);
+    }
     scored.truncate(k);
     scored
 }
@@ -118,6 +154,7 @@ mod tests {
 
     fn index() -> Index {
         Index {
+            version: INDEX_VERSION,
             embed_model: "m".into(),
             dim: 3,
             chunks: vec![
@@ -133,27 +170,45 @@ mod tests {
     #[test]
     fn ordering_threshold_and_k() {
         let idx = index();
-        let q = [1.0, 0.0, 0.0];
+        // Query between alpha and delta: alpha 0.92, beta 0.95, delta 0.92, gamma 0.38.
+        let q = [0.92, 0.38, 0.0];
         let r = top_k(&idx, &q, "", 10, 0.35);
         let order: Vec<usize> = r.iter().map(|x| x.0).collect();
-        assert_eq!(order, vec![0, 1, 3]); // gamma (0.0) below threshold, wrong dim skipped
-        assert!((r[0].1 - 1.0).abs() < 1e-6);
+        // gamma is within the threshold but far below the best; wrong dim skipped.
+        assert_eq!(order.len(), 3);
+        assert_eq!(order[0], 1);
+        assert!(!order.contains(&2) && !order.contains(&4));
         assert!(r.windows(2).all(|w| w[0].1 >= w[1].1));
         assert_eq!(top_k(&idx, &q, "", 2, 0.35).len(), 2);
         assert!(top_k(&idx, &q, "", 5, 1.01).is_empty());
     }
 
     #[test]
+    fn relative_window_drops_far_results() {
+        let scored = vec![(0, 0.80), (1, 0.70), (2, 0.66), (3, 0.50), (4, 0.30)];
+        let r = top_k_from(scored, 10, 0.42);
+        assert_eq!(r, vec![(0, 0.80), (1, 0.70), (2, 0.66)]);
+        // Weak best: everything near it stays, the threshold still applies.
+        let r = top_k_from(vec![(0, 0.45), (1, 0.43), (2, 0.40)], 10, 0.42);
+        assert_eq!(r, vec![(0, 0.45), (1, 0.43)]);
+        assert!(top_k_from(vec![(0, 0.2)], 10, 0.42).is_empty());
+    }
+
+    #[test]
     fn keyword_boost_lifts_exact_match() {
         let idx = index();
-        let q = [1.0, 0.0, 0.0];
-        // "gamma" has cosine 0 but matches the keyword: 0 + 0.15 < 0.35 still filtered.
-        assert!(top_k(&idx, &q, "gamma", 5, 0.35).iter().all(|x| x.0 != 2));
-        // With a lower threshold it shows up thanks to the boost.
-        let r = top_k(&idx, &q, "gamma", 5, 0.1);
-        assert!(r.iter().any(|x| x.0 == 2));
+        let q = [0.0, 1.0, 0.0];
+        // gamma 1.0; alpha 0 (+0.15 boost) stays far below the best.
+        assert!(top_k(&idx, &q, "alpha", 5, 0.1).iter().all(|x| x.0 != 0));
+        // Alone (no strong hit), the boost alone can lift it over a low threshold.
+        let r = top_k_from(
+            vec![(0, keyword_boost(&keywords("alpha"), "alpha"))],
+            5,
+            0.1,
+        );
+        assert_eq!(r.len(), 1);
         // Boost reorders near-ties: "beta" (0.994) + boost beats "alpha" (1.0).
-        let r = top_k(&idx, &q, "beta", 5, 0.35);
+        let r = top_k(&idx, &[1.0, 0.0, 0.0], "beta", 5, 0.35);
         assert_eq!(r[0].0, 1);
     }
 

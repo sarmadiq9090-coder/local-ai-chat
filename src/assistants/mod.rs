@@ -43,6 +43,29 @@ impl std::fmt::Display for NotFound {
 
 impl std::error::Error for NotFound {}
 
+/// The knowledge index is stale (built with another embed model or an older
+/// chunker): it must be re-indexed before searching. Answer 409
+/// `{error, code: "reindex_required"}`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReindexRequired(pub String);
+
+impl std::fmt::Display for ReindexRequired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for ReindexRequired {}
+
+/// Result of [`AssistantStore::list`].
+#[derive(Debug, Default)]
+pub struct AssistantList {
+    pub assistants: Vec<Assistant>,
+    /// Ids whose `assistant.json` was unreadable: each was renamed to
+    /// `assistant.json.corrupt-<unix ms>` and left out of the list.
+    pub corrupt: Vec<String>,
+}
+
 /// Max extracted plain text per document, in bytes (5 MB).
 pub const MAX_DOC_TEXT_BYTES: usize = 5 * 1024 * 1024;
 /// Max indexed chunks per assistant (all documents together).
@@ -138,14 +161,19 @@ impl AssistantStore {
 
     // ---- assistant CRUD -------------------------------------------------
 
-    /// All assistants, most recently updated first.
-    pub fn list(&self) -> anyhow::Result<Vec<Assistant>> {
+    /// All assistants, most recently updated first. A corrupt
+    /// `assistant.json` is backed up as `assistant.json.corrupt-<unix ms>`
+    /// (so it stops failing) and reported in [`AssistantList::corrupt`]; the
+    /// rest of the list still loads.
+    pub fn list(&self) -> anyhow::Result<AssistantList> {
         let entries = match std::fs::read_dir(&self.inner.dir) {
             Ok(e) => e,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(AssistantList::default());
+            }
             Err(e) => return Err(e.into()),
         };
-        let mut out = Vec::new();
+        let mut out = AssistantList::default();
         for entry in entries {
             let entry = entry?;
             let Some(id) = entry.file_name().to_str().map(str::to_string) else {
@@ -154,11 +182,22 @@ impl AssistantStore {
             if !Self::valid_id(&id) {
                 continue;
             }
-            if let Ok(Some(a)) = self.get(&id) {
-                out.push(a);
+            match self.get(&id) {
+                Ok(Some(a)) => out.assistants.push(a),
+                Ok(None) => {}
+                Err(e) if e.downcast_ref::<serde_json::Error>().is_some() => {
+                    let file = self.assistant_file(&id);
+                    let backup =
+                        file.with_file_name(format!("assistant.json.corrupt-{}", now_ms()));
+                    eprintln!("assistants: {e:#}; moved to {}", backup.display());
+                    let _ = std::fs::rename(&file, &backup);
+                    out.corrupt.push(id);
+                }
+                Err(e) => eprintln!("assistants: skipping {id}: {e:#}"),
             }
         }
-        out.sort_by_key(|a| std::cmp::Reverse(a.updated_at));
+        out.assistants
+            .sort_by_key(|a| std::cmp::Reverse(a.updated_at));
         Ok(out)
     }
 
@@ -314,6 +353,18 @@ impl AssistantStore {
         })
     }
 
+    /// `Some(model)` if Ollama is reachable and the assistant's embedding
+    /// model is definitely not installed (checked before streaming an upload
+    /// or re-index, so the API can answer 424). `None` when it is installed or
+    /// when that can't be determined (the stream then reports it).
+    pub async fn missing_embed_model(&self, ollama_url: &str, id: &str) -> Option<String> {
+        let a = self.get(id).ok()??;
+        match embed::is_installed(&self.inner.http, ollama_url, &a.embed_model).await {
+            Some(false) => Some(a.embed_model),
+            _ => None,
+        }
+    }
+
     /// Embed `texts` in batches, reporting `embedding` progress offset by `done`.
     async fn embed_all(
         &self,
@@ -378,12 +429,18 @@ impl AssistantStore {
             done: 0,
             total: 1,
         });
-        let (kind, size, text) = match input {
+        let (kind, size, text, warning) = match input {
             DocInput::File(bytes) => {
                 let size = bytes.len() as u64;
-                (DocKind::File, size, extract::extract(name, bytes).await?)
+                let ex = extract::extract(name, bytes).await?;
+                (DocKind::File, size, ex.text, ex.warning)
             }
-            DocInput::Note(text) => (DocKind::Note, text.len() as u64, extract::normalize(&text)),
+            DocInput::Note(text) => (
+                DocKind::Note,
+                text.len() as u64,
+                extract::normalize(&text),
+                None,
+            ),
         };
         if text.is_empty() {
             bail!("no text found in {name}");
@@ -402,6 +459,7 @@ impl AssistantStore {
             size,
             chunks: 0,
             added_at: now_ms(),
+            warning: warning.map(str::to_string),
             ..Default::default()
         };
         let doc_path = self.doc_file(id, &doc.id);
@@ -454,6 +512,7 @@ impl AssistantStore {
             );
         }
         let mut new_idx = Index {
+            version: index::INDEX_VERSION,
             embed_model: a.embed_model.clone(),
             dim,
             chunks: idx.chunks.clone(),
@@ -504,6 +563,7 @@ impl AssistantStore {
             self.save_index(
                 id,
                 Index {
+                    version: idx.version,
                     embed_model: idx.embed_model.clone(),
                     dim: idx.dim,
                     chunks,
@@ -581,6 +641,7 @@ impl AssistantStore {
         self.save_index(
             &a.id,
             Index {
+                version: index::INDEX_VERSION,
                 embed_model: a.embed_model.clone(),
                 dim,
                 chunks,
@@ -600,8 +661,9 @@ impl AssistantStore {
     // ---- retrieval ------------------------------------------------------
 
     /// Most relevant passages for `query` (default k = 5, min score
-    /// [`index::MIN_SCORE`] = 0.5, tuned on bge-m3).
-    /// Empty when nothing passes the threshold or the knowledge base is empty.
+    /// [`index::MIN_SCORE`], tuned on bge-m3, and within
+    /// [`index::RELATIVE_WINDOW`] of the best). Empty when nothing passes or
+    /// the knowledge base is empty. `Err(ReindexRequired)` on a stale index.
     pub async fn search(
         &self,
         ollama_url: &str,
@@ -616,11 +678,18 @@ impl AssistantStore {
             return Ok(Vec::new());
         }
         if idx.embed_model != a.embed_model {
-            bail!(
+            return Err(ReindexRequired(format!(
                 "the knowledge index was built with '{}' but the assistant uses '{}'; re-index required",
-                idx.embed_model,
-                a.embed_model
-            );
+                idx.embed_model, a.embed_model
+            ))
+            .into());
+        }
+        if is_stale(&a, &idx) {
+            return Err(ReindexRequired(
+                "the knowledge index is out of date (built by an older version); re-index required"
+                    .into(),
+            )
+            .into());
         }
         let k = k.unwrap_or(index::DEFAULT_K).clamp(1, 50);
         let qvec = embed::embed(
@@ -656,10 +725,13 @@ impl AssistantStore {
     }
 }
 
-/// The index doesn't match the assistant: built with another embed model, or
-/// some doc's chunk count disagrees with what the index holds.
+/// The index doesn't match the assistant: built with another embed model or
+/// an older [`index::INDEX_VERSION`], or some doc's chunk count disagrees with
+/// what the index holds.
 fn is_stale(a: &Assistant, idx: &Index) -> bool {
-    if !idx.chunks.is_empty() && idx.embed_model != a.embed_model {
+    if !idx.chunks.is_empty()
+        && (idx.embed_model != a.embed_model || idx.version != index::INDEX_VERSION)
+    {
         return true;
     }
     let mut counts: HashMap<&str, usize> = HashMap::new();

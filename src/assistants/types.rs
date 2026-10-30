@@ -72,6 +72,10 @@ pub struct DocMeta {
     pub size: u64,
     pub chunks: usize,
     pub added_at: i64,
+    /// Extraction quality warning, e.g. `"arabic_pdf_quality"` (an Arabic PDF
+    /// whose text had to be repaired and may be inaccurate).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -132,6 +136,10 @@ pub struct Progress {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Index {
+    /// Chunking/format version ([`crate::assistants::index::INDEX_VERSION`]);
+    /// an index from an older version is stale and must be rebuilt.
+    /// Missing in indexes written before v2.1.1 (= 0).
+    pub version: u32,
     pub embed_model: String,
     pub dim: usize,
     pub chunks: Vec<IndexedChunk>,
@@ -163,7 +171,8 @@ pub struct IndexStatus {
     pub embed_model: String,
     pub dim: usize,
     pub chunks: usize,
-    /// The index was built with a different model than `assistant.embed_model`
-    /// (or is missing chunks for some docs): a re-index is required.
+    /// The index was built with a different model than `assistant.embed_model`,
+    /// by an older chunker version, or is missing chunks for some docs: a
+    /// re-index is required.
     pub stale: bool,
 }

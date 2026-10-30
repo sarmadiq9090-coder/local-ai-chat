@@ -1580,6 +1580,7 @@ dependencies = [
  "sha2 0.10.9",
  "tao",
  "tokio",
+ "unicode-normalization",
  "uuid",
  "windows-sys 0.61.2",
  "winresource",

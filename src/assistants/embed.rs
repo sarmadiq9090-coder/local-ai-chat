@@ -82,6 +82,37 @@ pub async fn embed(
     Ok(out)
 }
 
+/// Whether `model` is installed in Ollama (`GET /api/tags`; `"bge-m3"` also
+/// matches `"bge-m3:latest"`). `None` if Ollama can't be asked (unreachable,
+/// unexpected answer).
+pub async fn is_installed(http: &reqwest::Client, base_url: &str, model: &str) -> Option<bool> {
+    #[derive(Deserialize)]
+    struct Tags {
+        models: Vec<Tag>,
+    }
+    #[derive(Deserialize)]
+    struct Tag {
+        name: String,
+    }
+    let tags: Tags = http
+        .get(format!("{}/api/tags", base_url.trim_end_matches('/')))
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+    let latest = format!("{model}:latest");
+    Some(
+        tags.models
+            .iter()
+            .any(|m| m.name == model || m.name == latest),
+    )
+}
+
 /// Scale `v` to unit length (no-op for the zero vector).
 pub fn normalize(v: &mut [f32]) {
     let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt();
