@@ -110,7 +110,8 @@ pub struct DocMeta {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct DigestMeta {
-    /// `"ok"` (generated), `"edited"` (saved by the user) or `"failed"`.
+    /// `"ok"` (generated), `"edited"` (saved by the user), `"failed"`, or
+    /// `"short"` (text under `digest::MIN_DIGEST_CHARS`: no digest needed).
     pub status: String,
     /// Chat model that wrote it.
     pub model: String,

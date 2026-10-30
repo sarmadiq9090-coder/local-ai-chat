@@ -93,6 +93,33 @@ impl std::fmt::Display for TooLarge {
 
 impl std::error::Error for TooLarge {}
 
+/// A document yielded no text at all. `scanned` = a PDF (most likely images
+/// only, no OCR text). The API adds `code: "no_text_scanned"` / `"no_text"`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoText {
+    pub message: String,
+    pub scanned: bool,
+}
+
+impl std::fmt::Display for NoText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for NoText {}
+
+impl NoText {
+    /// Machine-readable error code for the UI.
+    pub fn code(&self) -> &'static str {
+        if self.scanned {
+            "no_text_scanned"
+        } else {
+            "no_text"
+        }
+    }
+}
+
 /// `Err(TooLarge)` if a document's extracted text is over the cap.
 pub fn check_doc_text_size(name: &str, text_len: usize) -> Result<(), TooLarge> {
     if text_len > MAX_DOC_TEXT_BYTES {
@@ -469,12 +496,18 @@ impl AssistantStore {
             ),
         };
         if text.is_empty() {
-            if pages.is_some() {
-                bail!(
-                    "no text found in {name}: it is probably a scanned PDF (images only); upload a copy with OCR text"
-                );
+            let scanned = pages.is_some();
+            return Err(NoText {
+                message: if scanned {
+                    format!(
+                        "no text found in {name}: it is probably a scanned PDF (images only); upload a copy with OCR text"
+                    )
+                } else {
+                    format!("no text found in {name}")
+                },
+                scanned,
             }
-            bail!("no text found in {name}");
+            .into());
         }
         check_doc_text_size(name, text.len())?;
         progress(Progress {
@@ -704,7 +737,11 @@ impl AssistantStore {
                     meta.error = None;
                 }
                 meta.chunks = dg;
-            } else if doc.digest.as_ref().is_some_and(|g| g.status != "failed") {
+            } else if doc
+                .digest
+                .as_ref()
+                .is_some_and(|g| g.status != "failed" && g.status != digest::STATUS_SHORT)
+            {
                 doc.digest = None; // digest file gone
             }
         }

@@ -264,22 +264,143 @@ fn rtl_word(visual_token: &str) -> Word {
     }
 }
 
+fn is_digit(c: char) -> bool {
+    c.is_ascii_digit() || matches!(c, '\u{0660}'..='\u{0669}' | '\u{06F0}'..='\u{06F9}')
+}
+
+/// Punctuation that sticks to numbers: common separators (`. , : /`, also
+/// inside a number), `-`/`–` (ranges, phone numbers) and `%`.
+fn is_num_punct(c: char) -> bool {
+    matches!(c, '.' | ',' | ':' | '/' | '-' | '–' | '%' | '٫' | '٬' | '٪')
+}
+
+/// Separators that stay inside a number when they sit between two digits
+/// (`12.5`, `3,450`, `8:00`, `15/03/2026`).
+fn is_num_sep(c: char) -> bool {
+    matches!(c, '.' | ',' | ':' | '/' | '٫' | '٬')
+}
+
+/// A token made only of digits and number punctuation, with a digit.
+fn is_numeric_token(t: &str) -> bool {
+    t.chars().any(is_digit) && t.chars().all(|c| is_digit(c) || is_num_punct(c))
+}
+
+/// A glyph-positioned fragment of a number: one digit, optionally preceded by
+/// one punctuation mark (`5`, `.5`, `-0`, `%1`, `,4`, `:0`, `/0`).
+fn is_digit_fragment(t: &str) -> bool {
+    let cs: Vec<char> = t.chars().collect();
+    match cs.as_slice() {
+        [d] => is_digit(*d),
+        [p, d] => is_num_punct(*p) && is_digit(*d),
+        _ => false,
+    }
+}
+
+/// Glyph-positioned PDFs (e.g. printed by Edge/Chrome) can put a space
+/// between every digit of a number (`.1 0 0 1 1`, `%1 2 .5`, `3 ,4 5 0`).
+/// Re-join runs of two or more one-digit fragments into one token.
+fn merge_digit_fragments<'a>(tokens: &[&'a str]) -> Vec<std::borrow::Cow<'a, str>> {
+    use std::borrow::Cow;
+    let mut out: Vec<Cow<'a, str>> = Vec::with_capacity(tokens.len());
+    let mut i = 0;
+    while i < tokens.len() {
+        let mut j = i;
+        while j < tokens.len() && is_digit_fragment(tokens[j]) {
+            j += 1;
+        }
+        if j - i >= 2 {
+            out.push(Cow::Owned(tokens[i..j].concat()));
+            i = j;
+        } else {
+            out.push(Cow::Borrowed(tokens[i]));
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Logical order of a run of numbers in an Arabic line, given in visual
+/// order (`.10011`, `% 12.5`, `4242 -0800`). Digits in Arabic context are
+/// Arabic numbers: each number (digits joined by `. , : /`) keeps its own
+/// order, but the numbers and the marks around them are laid out right to
+/// left, so the run is reversed number by number. Then sentence/number marks
+/// are glued to the number before them (`10011.`, `12.5%`) and a `-` touching
+/// a number on one side loses the extractor's space on the other
+/// (`0800-4242`).
+fn logical_number_run(visual: &str) -> String {
+    let cs: Vec<char> = visual.chars().collect();
+    let mut atoms: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < cs.len() {
+        if is_digit(cs[i]) {
+            let mut s = String::new();
+            while i < cs.len()
+                && (is_digit(cs[i])
+                    || (is_num_sep(cs[i]) && cs.get(i + 1).is_some_and(|&c| is_digit(c))))
+            {
+                s.push(cs[i]);
+                i += 1;
+            }
+            atoms.push(s);
+        } else {
+            atoms.push(cs[i].to_string());
+            i += 1;
+        }
+    }
+    atoms.reverse();
+    let is_core = |a: &str| a.starts_with(is_digit);
+    let mut out: Vec<String> = Vec::with_capacity(atoms.len());
+    for (k, a) in atoms.iter().enumerate() {
+        if a == " " {
+            let prev = out.last().map(String::as_str).unwrap_or("");
+            let next = atoms.get(k + 1).map(String::as_str).unwrap_or("");
+            let after_next = atoms.get(k + 2).map(String::as_str).unwrap_or("");
+            let prev_prev = out
+                .len()
+                .checked_sub(2)
+                .map(|p| out[p].as_str())
+                .unwrap_or("");
+            let mark = |s: &str| matches!(s, "." | "," | ":" | "%" | "٪" | "٫" | "٬");
+            let dash = |s: &str| matches!(s, "-" | "–");
+            // "12.5 %" → "12.5%", "4242 ." → "4242."
+            let drop = (is_core(prev) && mark(next))
+                // "0800- 4242" → "0800-4242" (dash glued to a number on the left)
+                || (dash(prev) && is_core(prev_prev) && is_core(next))
+                // "0800 -4242" → "0800-4242" (dash glued to a number on the right)
+                || (is_core(prev) && dash(next) && is_core(after_next));
+            if drop {
+                continue;
+            }
+        }
+        out.push(a.clone());
+    }
+    out.concat()
+}
+
 /// Rebuild one visual-order line in logical order.
 fn fix_visual_line(line: &str) -> String {
-    let tokens: Vec<&str> = line.split_whitespace().collect();
+    let raw_tokens: Vec<&str> = line.split_whitespace().collect();
+    let tokens = merge_digit_fragments(&raw_tokens);
+    let numeric: Vec<bool> = tokens.iter().map(|t| is_numeric_token(t)).collect();
     let dirs: Vec<Dir> = tokens
         .iter()
-        .map(|t| {
+        .enumerate()
+        .map(|(i, t)| {
             if t.chars().any(is_arabic) {
                 Dir::Rtl
             } else if t.chars().any(is_ltr) {
+                Dir::Ltr
+            } else if t.chars().all(is_num_punct)
+                && ((i > 0 && numeric[i - 1]) || numeric.get(i + 1).copied().unwrap_or(false))
+            {
+                // "% 12.5", ". 4242": a mark next to a number belongs to it.
                 Dir::Ltr
             } else {
                 Dir::Neutral
             }
         })
         .collect();
-    // Neutrals between two LTR tokens ("8:00 - 4:00") stay in the LTR run.
+    // Neutrals between two LTR tokens ("8:00 ~ 4:00") stay in the LTR run.
     let resolved: Vec<Dir> = (0..tokens.len())
         .map(|i| match dirs[i] {
             Dir::Neutral => {
@@ -294,8 +415,10 @@ fn fix_visual_line(line: &str) -> String {
             d => d,
         })
         .collect();
-    // Consecutive LTR tokens form one run kept in its own order; each RTL
-    // token is its own group. The groups are then reversed.
+    // Consecutive LTR tokens form one run; each RTL token is its own group.
+    // The groups are then reversed. A run with Latin letters keeps its own
+    // order; a run of numbers only is laid out right to left number by number
+    // (see `logical_number_run`).
     let mut groups: Vec<(bool, Vec<Word>)> = Vec::new();
     for (t, d) in tokens.iter().zip(&resolved) {
         if *d == Dir::Ltr {
@@ -312,8 +435,39 @@ fn fix_visual_line(line: &str) -> String {
             groups.push((false, vec![rtl_word(t)]));
         }
     }
+    for (ltr, run) in groups.iter_mut() {
+        let latin = run
+            .iter()
+            .any(|w| w.text.chars().any(|c| c.is_alphabetic() && !is_arabic(c)));
+        if *ltr && !latin {
+            let visual = run
+                .iter()
+                .map(|w| w.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
+            *run = vec![Word {
+                text: logical_number_run(&visual),
+                glue_prev: false,
+                glue_next: false,
+            }];
+        }
+    }
     groups.reverse();
-    let words: Vec<Word> = groups.into_iter().flat_map(|(_, w)| w).collect();
+    let mut words: Vec<Word> = groups.into_iter().flat_map(|(_, w)| w).collect();
+
+    // A lam-alef ligature (ﻻ ﻷ …) can come out as a lone «ل» before a word
+    // starting with alef («العمل اء» ← «العم ل اء», «ا ل أعضاء»): the «ل»
+    // belongs to the next word, and a lone «ا» before it is the article.
+    for i in 0..words.len().saturating_sub(1) {
+        let next_alef = words[i + 1].text.starts_with(['ا', 'أ', 'إ', 'آ']);
+        if words[i].text == "ل" && next_alef {
+            words[i].glue_next = true;
+        }
+        if words[i].text == "ا" && words[i + 1].text == "ل" {
+            words[i].glue_prev = false;
+            words[i].glue_next = true;
+        }
+    }
 
     // Re-join words that the PDF split at glyph gaps.
     let ends_arabic = |s: &str| s.chars().last().is_some_and(|c| is_arabic(c) || is_mark(c));
@@ -356,7 +510,7 @@ pub fn fix_arabic_pdf(raw: &str) -> (String, Option<&'static str>) {
             let has_arabic = line.chars().any(is_arabic);
             if has_arabic && (visual_doc || line.chars().any(is_presentation_form)) {
                 fixed_lines += 1;
-                join_split_digits(&fix_visual_line(&line))
+                fix_visual_line(&line)
             } else {
                 line
             }
@@ -365,32 +519,6 @@ pub fn fix_arabic_pdf(raw: &str) -> (String, Option<&'static str>) {
     let letters = raw.chars().filter(|c| c.is_alphanumeric()).count().max(1);
     let warning = (fixed_lines > 0 || lost * 100 > letters).then_some(WARN_ARABIC_PDF);
     (lines.join("\n"), warning)
-}
-
-/// Glyph-positioned Arabic PDFs (e.g. printed by Edge/Chrome) come out with
-/// a space between the digits of a number («2 0 2 5», «%2 0», «8 :0 0»).
-/// Re-join a token that is a single digit (optionally followed by
-/// punctuation) onto a previous token ending in a digit, and `N :MM` times.
-pub fn join_split_digits(line: &str) -> String {
-    let mut out: Vec<String> = Vec::new();
-    for tok in line.split(' ') {
-        let single_digit = {
-            let mut cs = tok.chars();
-            cs.next().is_some_and(|c| c.is_ascii_digit()) && cs.all(|c| !c.is_alphanumeric())
-        };
-        let time_part = tok.starts_with(':') && tok[1..].starts_with(|c: char| c.is_ascii_digit());
-        if let Some(prev) = out.last_mut()
-            && prev.ends_with(|c: char| c.is_ascii_digit())
-            && !prev.ends_with(|c: char| !c.is_ascii_digit())
-            && (single_digit && !prev.contains(['.', ',', '،'])
-                || time_part && prev.chars().all(|c| c.is_ascii_digit()))
-        {
-            prev.push_str(tok);
-            continue;
-        }
-        out.push(tok.to_string());
-    }
-    out.join(" ")
 }
 
 /// `pdf-extract` often separates *every* line with a blank line, which would
@@ -462,21 +590,109 @@ pub fn normalize(text: &str) -> String {
 mod tests {
     use super::*;
 
+    /// Raw lines of a headless-Edge PDF (Segoe UI 11pt) where pdf-extract puts
+    /// a space between every digit, and the number each must yield.
+    const EDGE_SPLIT_DIGITS: &[(&str, &str)] = &[
+        (".1 0 0 1 1  ﻮﻫ يﺪﻳﺮ ﺒﻟا  ﺰ ﻣﺮ ﻟا", "هو 10011."),
+        (".2 5 0 0 0  عﻮﻓ ﺪﻤﻟا  لﺎ ﻤﻟا  سأ ر", " 25000."),
+        (".2 0 2 6  مﺎ ﻋ ﻲﻓ  ﺔﻛ رشﻟا  ﺖﺴﺳﺄ ﺗ", "في عام 2026."),
+        (
+            ".ءﺎ ﻀ ﻋأ ل ا  ﻞﻜﻟ %1 2 .5  يﻮﻨﺴﻟا  ﻢﺼ ﺨﻟا  ﺔﺒﺴﻧ",
+            "السنوي 12.5% لكل الأعضاء.",
+        ),
+        (
+            ".ا ًل ﻴ ﻤﻋ 3 ,4 5 0  ﻦﻴ ﻠﺠﺴﻤﻟا  ءا ل ﻤﻌﻟا  د ﺪﻋ",
+            "العملاء المسجلين 3,450 ",
+        ),
+        (
+            ".ﺎ ًﻧﺎ ﺠﻣ 4 2 4 2 -0 8 0 0  ءا ل ﻤﻌﻟا  ﺔﻣﺪﺧ  ﻢﻗ ر",
+            "خدمة العملاء 0800-4242 مجانًا.",
+        ),
+        (
+            ".ﻂﻘ ﻓ  %2 0  ﺔﺒﺴﻨﻟا و 1 5 /0 3 /2 0 2 6  ﺦ ﻳرﺎ ﺘﻟا و 4 :0 0  ﻰﻟإ  8 :0 0  ﻦﻣ ما وﺪﻟا",
+            "من 8:00 إلى 4:00 والتاريخ 15/03/2026 والنسبة 20% فقط.",
+        ),
+        (
+            ".3 ,4 5 0  مﻮﺳﺮ ﻟا و .4 2 4 2 -0 8 0 0  ﺐﺘﻜﻤﻟا  ﻒﺗ ﺎ ﻫ",
+            "المكتب 0800-4242. والرسوم 3,450.",
+        ),
+    ];
+
+    /// The same sentences printed with Arial: whole numbers, but marks next
+    /// to them are separate or attached on the visual side.
+    const EDGE_ARIAL: &[(&str, &str)] = &[
+        (".10011  وھ يدﯾرﺑﻟا زﻣرﻟا", "الرمز البريدي هو 10011."),
+        (".25000  عوﻓدﻣﻟا لﺎﻣﻟا سأر", "رأس المال المدفوع 25000."),
+        (".2026  مﺎﻋ ﻲﻓ ﺔﻛرﺷﻟا تﺳﺳﺄﺗ", "تأسست الشركة في عام 2026."),
+        (
+            ".ءﺎﺿﻋﻷا لﻛﻟ % 12.5  يوﻧﺳﻟا مﺻﺧﻟا ﺔﺑﺳﻧ",
+            "نسبة الخصم السنوي 12.5% لكل الأعضاء.",
+        ),
+        (
+            ". ًﻼﯾﻣﻋ 3,450  نﯾﻠﺟﺳﻣﻟا ءﻼﻣﻌﻟا ددﻋ",
+            "عدد العملاء المسجلين 3,450 عميلاً .",
+        ),
+        (
+            ".ﺎًﻧﺎﺟﻣ 4242 -0800  ءﻼﻣﻌﻟا ﺔﻣدﺧ مﻗر",
+            "رقم خدمة العملاء 0800-4242 مجانًا.",
+        ),
+        (
+            ".طﻘﻓ % 20  ﺔﺑﺳﻧﻟاو  15/03/2026  ﺦﯾرﺎﺗﻟاو  4:00  ﻰﻟإ  8:00  نﻣ ماودﻟا",
+            "الدوام من 8:00 إلى 4:00 والتاريخ 15/03/2026 والنسبة 20% فقط.",
+        ),
+        (
+            ".3,450  موﺳرﻟاو . 4242 -0800  بﺗﻛﻣﻟا فﺗﺎھ",
+            "هاتف المكتب 0800-4242. والرسوم 3,450.",
+        ),
+    ];
+
     #[test]
-    fn split_digits_are_rejoined() {
-        assert_eq!(
-            join_split_digits("تاريخ السريان: 1 يناير 2 0 2 5 — في 1 5 ديسمبر"),
-            "تاريخ السريان: 1 يناير 2025 — في 15 ديسمبر"
-        );
-        assert_eq!(join_split_digits("بنسبة %2 0 للموظف"), "بنسبة %20 للموظف");
-        assert_eq!(
-            join_split_digits("الساعة 8 :0 0 صباحًا"),
-            "الساعة 8:00 صباحًا"
-        );
-        assert_eq!(join_split_digits("مدتها 4 5 دقيقة."), "مدتها 45 دقيقة.");
-        // Ordinary numbers and lists are left alone.
-        assert_eq!(join_split_digits("30 يومًا و 60 يومًا"), "30 يومًا و 60 يومًا");
-        assert_eq!(join_split_digits("الإصدار 2.1 3"), "الإصدار 2.1 3");
+    fn edge_pdf_split_digits_become_whole_numbers() {
+        for (raw, want) in EDGE_SPLIT_DIGITS {
+            let (text, warn) = fix_arabic_pdf(raw);
+            assert_eq!(warn, Some(WARN_ARABIC_PDF));
+            assert!(text.contains(want), "{raw:?} → {text:?}, want {want:?}");
+        }
+    }
+
+    #[test]
+    fn edge_pdf_numbers_keep_logical_order_and_punctuation() {
+        for (raw, want) in EDGE_ARIAL {
+            assert_eq!(fix_arabic_pdf(raw).0, *want, "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn number_runs_in_visual_order() {
+        assert_eq!(logical_number_run(".10011"), "10011.");
+        assert_eq!(logical_number_run("% 12.5"), "12.5%");
+        assert_eq!(logical_number_run("%20"), "20%");
+        assert_eq!(logical_number_run("4242 -0800"), "0800-4242");
+        assert_eq!(logical_number_run(". 4242 -0800"), "0800-4242.");
+        assert_eq!(logical_number_run("3,450"), "3,450");
+        // A spaced range keeps its spaces; two numbers swap (RTL layout).
+        assert_eq!(logical_number_run("20 - 10"), "10 - 20");
+        assert_eq!(logical_number_run("4:00 8:00"), "8:00 4:00");
+        // Fragments are merged only when every one is a single digit.
+        let toks = ["2.1", "3", "4", "5", "x"];
+        assert_eq!(merge_digit_fragments(&toks), vec!["2.1", "345", "x"]);
+        let toks = ["مدتها", "4", "5", "دقيقة"];
+        assert_eq!(merge_digit_fragments(&toks), vec!["مدتها", "45", "دقيقة"]);
+        let toks = ["30", "يومًا", "و", "60"];
+        assert_eq!(merge_digit_fragments(&toks), vec!["30", "يومًا", "و", "60"]);
+    }
+
+    #[test]
+    fn latin_text_with_numbers_is_untouched() {
+        for s in [
+            "Plain English 12.5% and 0800-4242. Total: 3,450 on 15/03/2026.",
+            "Version 2.1 3 of Windows 11 (build 26100)",
+        ] {
+            assert_eq!(fix_arabic_pdf(s), (s.to_string(), None));
+        }
+        // A Latin run inside an Arabic visual line keeps its order.
+        let (text, _) = fix_arabic_pdf("ﻡﺪﺨﺘﺳﺍ Windows 11 ﻞﻴﻐﺸﺗ");
+        assert_eq!(text, "تشغيل Windows 11 استخدم");
     }
 
     #[test]

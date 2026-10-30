@@ -5,8 +5,9 @@
 //! 1. **Query rewriting** — when the last user message is short or refers to
 //!    earlier turns ([`needs_rewrite`]), the chat model rewrites it into a
 //!    standalone search query (non-streaming, temperature 0.1, ≤ 60 tokens,
-//!    thinking off; cached per conversation tail). Both queries are searched
-//!    and merged (best score per chunk).
+//!    thinking off; few-shot prompt; cached per conversation tail and
+//!    [`REWRITE_PROMPT_VERSION`]). The message, the rewrite and the previous
+//!    question + message are searched and merged (best score per chunk).
 //! 2. **Search** — like `/search` (cosine + keyword boost, `MIN_SCORE`,
 //!    `RELATIVE_WINDOW`) over document chunks *and* digest chunks, up to
 //!    [`DEEP_K`] hits.
@@ -237,15 +238,51 @@ fn truncate_chars(s: &str, n: usize) -> String {
     }
 }
 
+/// Version of the rewrite prompt; part of the rewrite cache key so a changed
+/// prompt never reuses rewrites made by an older one.
+pub const REWRITE_PROMPT_VERSION: u32 = 2;
+
+/// System prompt of the rewrite call: rules plus few-shot examples (Arabic
+/// and English) of replacing only the slot the user changed.
+const REWRITE_SYSTEM: &str = "You rewrite the user's LAST message into a standalone search \
+query for a document search engine. Use the earlier conversation only to resolve what the last \
+message refers to (pronouns, \"and X?\", \"what about…\", «وماذا عن…»).
+Rules:
+- Write ONE complete, standalone question in the SAME LANGUAGE as the last message.
+- Start from the previous question and replace ONLY the part the user changed; keep every other \
+part (places, people, products, numbers, the subject) exactly as it was. Never swap or drop the \
+parts the user did not mention.
+- Do not start with \"and\", \"so\", «و» or «طيب».
+- Output only the query on one line: no answer, no explanation, no quotes.
+
+Examples:
+Conversation:
+User: كم سعر الشحن من الرياض إلى جدة؟
+Last message: وماذا عن الدمام؟
+Standalone search query: كم سعر الشحن من الرياض إلى الدمام؟
+
+Conversation:
+User: ما شروط الإجازة السنوية للموظف الجديد؟
+Assistant: يستحق الموظف الجديد الإجازة بعد إكمال ستة أشهر…
+Last message: وكم مدتها؟
+Standalone search query: كم مدة الإجازة السنوية للموظف الجديد؟
+
+Conversation:
+User: What is the warranty period of the X200 vacuum?
+Assistant: The X200 has a two-year warranty.
+Last message: and the X300?
+Standalone search query: What is the warranty period of the X300 vacuum?
+
+Conversation:
+User: Which documents do I need to open a personal account?
+Last message: is it the same for companies?
+Standalone search query: Which documents does a company need to open an account?";
+
 /// System + user prompt for the rewrite call: the last two earlier turns
-/// (replies cut to 300 chars) and the message to rewrite.
+/// (replies cut to 300 chars) and the message to rewrite, in the same
+/// layout as the examples.
 pub fn rewrite_prompt(messages: &[ChatTurn], last: usize) -> (String, String) {
-    let system = "You rewrite the user's LAST message into a standalone search query for a \
-document search engine. Use the earlier conversation only to resolve what the last message \
-refers to (pronouns, \"and X?\", \"what about…\", «وماذا عن…»). Keep the SAME LANGUAGE as the \
-last message. Keep names, numbers and key terms. Output only the query on one line: no answer, \
-no explanation, no quotes."
-        .to_string();
+    let system = REWRITE_SYSTEM.to_string();
     let mut ctx = Vec::new();
     let mut users = 0;
     for m in messages[..last].iter().rev() {
@@ -265,15 +302,75 @@ no explanation, no quotes."
     }
     ctx.reverse();
     let user = format!(
-        "Conversation:\n{}\n\nLast message: {}\n\nStandalone search query:",
+        "Conversation:\n{}\nLast message: {}\nStandalone search query:",
         ctx.join("\n"),
         messages[last].content.trim()
     );
     (system, user)
 }
 
-/// First meaningful line of the model's reply, without labels/quotes;
-/// `None` if empty or implausibly long.
+/// Rewrite cache key: assistant, model, prompt version and the prompt itself.
+pub fn rewrite_cache_key(assistant_id: &str, model: &str, user_prompt: &str) -> String {
+    format!("{assistant_id}\u{0}{model}\u{0}v{REWRITE_PROMPT_VERSION}\u{0}{user_prompt}")
+}
+
+/// Words a rewrite may open with after a stray «و» ("and"): «وماذا» → «ماذا».
+const AR_AFTER_WAW: &[&str] = &[
+    "ماذا",
+    "ما",
+    "كم",
+    "هل",
+    "متى",
+    "أين",
+    "اين",
+    "كيف",
+    "لماذا",
+    "من",
+    "في",
+    "إلى",
+    "الى",
+    "عن",
+    "لكن",
+    "أيضا",
+    "أيضًا",
+    "بالنسبة",
+];
+
+/// Drop a leading conjunction ("and", "so", «و», «طيب») from a rewrite.
+fn strip_leading_conjunction(q: &str) -> &str {
+    let mut q = q.trim();
+    loop {
+        let before = q;
+        for p in [
+            "and ",
+            "And ",
+            "AND ",
+            "so ",
+            "So ",
+            "also ",
+            "Also ",
+            "طيب، ",
+            "طيب ",
+            "و ",
+        ] {
+            if let Some(rest) = q.strip_prefix(p) {
+                q = rest.trim_start();
+            }
+        }
+        if let Some(rest) = q.strip_prefix('و') {
+            let word: String = rest.chars().take_while(|c| c.is_alphabetic()).collect();
+            if AR_AFTER_WAW.contains(&word.as_str()) {
+                q = rest;
+            }
+        }
+        if q == before {
+            return q;
+        }
+    }
+}
+
+/// First meaningful line of the model's reply, without labels/quotes or a
+/// leading conjunction; `None` if empty or implausibly long.
 pub fn clean_rewrite(reply: &str) -> Option<String> {
     let line = reply
         .lines()
@@ -291,6 +388,7 @@ pub fn clean_rewrite(reply: &str) -> Option<String> {
     .trim()
     .trim_matches(|c| matches!(c, '"' | '\'' | '«' | '»' | '“' | '”' | '`'))
     .trim();
+    let line = strip_leading_conjunction(line);
     (!line.is_empty() && line.chars().count() <= 300).then(|| line.to_string())
 }
 
@@ -697,7 +795,7 @@ impl AssistantStore {
         let t0 = Instant::now();
         if a.deep && req.rewrite != Some(false) && needs_rewrite(&last, has_history) {
             let (system, user) = rewrite_prompt(&req.messages, li);
-            let key = format!("{}\u{0}{}\u{0}{user}", a.id, model.as_deref().unwrap_or(""));
+            let key = rewrite_cache_key(&a.id, model.as_deref().unwrap_or(""), &user);
             if let Some(q) = self.rewrite_cache_get(&key) {
                 res.rewritten = Some(q);
                 res.rewrite = "cached";
@@ -733,7 +831,15 @@ impl AssistantStore {
         }
         res.timings.rewrite_ms = t0.elapsed().as_millis() as u64;
         match &res.rewritten {
-            Some(q) if q.trim() != last => queries.push(q.clone()),
+            Some(q) if q.trim() != last => {
+                queries.push(q.clone());
+                // A rewrite can still pick the wrong slot («من البصرة» instead
+                // of «إلى البصرة»): also search the previous question + the
+                // message, so every entity of both is searched.
+                if let Some(h) = heuristic_query(&req.messages, li) {
+                    queries.push(h);
+                }
+            }
             Some(_) => {}
             None if has_history && (res.rewrite == "failed" || !a.deep) => {
                 // Follow-up without a rewrite: also search with the previous question.
@@ -885,6 +991,52 @@ mod tests {
         );
         assert_eq!(clean_rewrite("   "), None);
         assert_eq!(clean_rewrite(&"x".repeat(400)), None);
+        // Leading conjunctions are dropped; words that merely start with و stay.
+        assert_eq!(
+            clean_rewrite("وماذا عن مدة التوصيل من بغداد إلى البصرة؟"),
+            Some("ماذا عن مدة التوصيل من بغداد إلى البصرة؟".into())
+        );
+        assert_eq!(
+            clean_rewrite("Standalone search query: and what is the X300 warranty?"),
+            Some("what is the X300 warranty?".into())
+        );
+        assert_eq!(clean_rewrite("و كم مدتها؟"), Some("كم مدتها؟".into()));
+        assert_eq!(
+            clean_rewrite("وثيقة التأمين الصحي"),
+            Some("وثيقة التأمين الصحي".into())
+        );
+        assert_eq!(
+            clean_rewrite("Andorra visa rules"),
+            Some("Andorra visa rules".into())
+        );
+    }
+
+    #[test]
+    fn rewrite_prompt_has_slot_examples_and_versioned_cache_key() {
+        let (system, _) = rewrite_prompt(
+            &[
+                ChatTurn {
+                    role: "user".into(),
+                    content: "ما مدة التوصيل من بغداد إلى أربيل؟".into(),
+                },
+                ChatTurn {
+                    role: "user".into(),
+                    content: "وماذا عن البصرة؟".into(),
+                },
+            ],
+            1,
+        );
+        // Few-shot: an Arabic slot replacement and English follow-ups.
+        assert!(system.contains("Last message: وماذا عن الدمام؟"));
+        assert!(system.contains("كم سعر الشحن من الرياض إلى الدمام؟"));
+        assert!(system.contains("What is the warranty period of the X300 vacuum?"));
+        assert!(system.contains("replace ONLY the part the user changed"));
+        let key = rewrite_cache_key("a1", "qwen3:8b", "prompt");
+        assert!(key.contains(&format!("v{REWRITE_PROMPT_VERSION}")));
+        assert_ne!(
+            key, "a1\u{0}qwen3:8b\u{0}prompt",
+            "old (v1) keys never match"
+        );
     }
 
     #[test]

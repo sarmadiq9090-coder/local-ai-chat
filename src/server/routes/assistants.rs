@@ -26,8 +26,8 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use crate::assistants::{
-    AssistantPatch, AssistantStore, DocInput, ModelMissing, NewAssistant, NotFound, Progress,
-    ReindexRequired, TooLarge, check_doc_text_size, deep, digest, extract, templates,
+    AssistantPatch, AssistantStore, DocInput, ModelMissing, NewAssistant, NoText, NotFound,
+    Progress, ReindexRequired, TooLarge, check_doc_text_size, deep, digest, extract, templates,
 };
 use crate::error::{ApiError, ApiResult};
 use crate::server::AppState;
@@ -60,6 +60,9 @@ fn map_err(e: anyhow::Error) -> ApiError {
     }
     if let Some(tl) = e.downcast_ref::<TooLarge>() {
         return ApiError::bad_request(tl.to_string());
+    }
+    if let Some(nt) = e.downcast_ref::<NoText>() {
+        return ApiError::bad_request(nt.to_string());
     }
     if e.downcast_ref::<ModelMissing>().is_some() {
         // Rendered with `missing_model` by `model_missing_response`.
@@ -239,10 +242,23 @@ fn progress_line(p: &Progress) -> Value {
     json!({ "status": p.status, "done": p.done, "total": p.total })
 }
 
+/// A progress line of one file of a multi-file upload: adds `{name, file, files}`
+/// (1-based position) so the UI can say which file is being processed.
+fn file_progress_line(p: &Progress, file: &Value) -> Value {
+    let mut v = progress_line(p);
+    if let (Some(o), Some(f)) = (v.as_object_mut(), file.as_object()) {
+        o.extend(f.clone());
+    }
+    v
+}
+
 fn error_line(e: &anyhow::Error, name: Option<&str>) -> Value {
     let mut v = json!({ "error": format!("{e:#}") });
     if let Some(mm) = e.downcast_ref::<ModelMissing>() {
         v["missing_model"] = json!(mm.0);
+    }
+    if let Some(nt) = e.downcast_ref::<NoText>() {
+        v["code"] = json!(nt.code());
     }
     if let Some(n) = name {
         v["name"] = json!(n);
@@ -283,6 +299,7 @@ async fn digest_one(
     doc_id: &str,
     ui_model: Option<String>,
     tx: &mpsc::UnboundedSender<Value>,
+    file: &Value,
 ) -> Option<String> {
     let app = app_defaults(s).await;
     let a = s.assistants.get(id).ok()??;
@@ -298,6 +315,7 @@ async fn digest_one(
         cancelled: &cancelled,
     };
     let ptx = tx.clone();
+    let file = file.clone();
     let mut err = None;
     let res = s
         .assistants
@@ -308,7 +326,7 @@ async fn digest_one(
             true,
             &job,
             move |p| {
-                let _ = ptx.send(progress_line(&p));
+                let _ = ptx.send(file_progress_line(&p, &file));
             },
             |_, _, r| {
                 if let Err(e) = r {
@@ -411,15 +429,18 @@ async fn add_docs(
             let e = anyhow::anyhow!("unsupported file type: {name}");
             let _ = tx.send(error_line(&e, Some(&name)));
         }
-        for (name, input) in inputs {
+        let files = inputs.len();
+        for (i, (name, input)) in inputs.into_iter().enumerate() {
             if tx.is_closed() {
                 break; // the client cancelled
             }
+            let file = json!({ "name": name, "file": i + 1, "files": files });
             let ptx = tx.clone();
+            let pfile = file.clone();
             let res = s
                 .assistants
                 .add_document(&url, &id, &name, input, move |p| {
-                    let _ = ptx.send(progress_line(&p));
+                    let _ = ptx.send(file_progress_line(&p, &pfile));
                 })
                 .await;
             let line = match res {
@@ -428,7 +449,8 @@ async fn add_docs(
                     // a failure leaves it indexed, reported as `digest_error`).
                     let deep_on = s.assistants.get(&id).ok().flatten().is_some_and(|a| a.deep);
                     if deep_on && !tx.is_closed() {
-                        let err = digest_one(&s, &url, &id, &doc.id, uq.model.clone(), &tx).await;
+                        let err =
+                            digest_one(&s, &url, &id, &doc.id, uq.model.clone(), &tx, &file).await;
                         let fresh = s
                             .assistants
                             .get(&id)

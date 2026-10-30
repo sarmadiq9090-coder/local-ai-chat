@@ -203,6 +203,17 @@ export default {
     asst_embedNoGpu: "بلا كرت شاشة منفصل",
     asst_embedReindexWarn: "تغيير موديل الفهرسة يتطلب إعادة فهرسة كل المستندات ({n}) عند الحفظ.",
     asst_embedReindexAsk: "غيّرت موديل الفهرسة إلى {name}. يجب إعادة فهرسة المستندات ({n}) قبل أن يبحث المساعد فيها. أعيد الفهرسة الآن؟",
+    // ---- v2.2.0 test fixes ----
+    asst_arabic_verygood: "جيدة جدًا",
+    asst_numCtxClamped: "طول السياق بين {min} و{max}؛ عُدّل إلى {n}.",
+    asst_digestShort: "قصير — لا يحتاج ملخصًا",
+    asst_digestShortInfo: "المستند قصير ({chars} حرف)، فيُستخدم نصه نفسه بدل الملخص.",
+    asst_digestEditedInfo: "عدّلته أنت · {chars} حرف",
+    asst_close: "إغلاق",
+    asst_err_no_text_scanned: "لم يُعثر على نص في «{name}»: يبدو أنه PDF ممسوح ضوئيًا (صور فقط). ارفع نسخة عليها نص (OCR) أو ملف ‎.txt.",
+    asst_err_no_text: "لم يُعثر على أي نص في «{name}».",
+    asst_uploadingFile: "«{name}» ({i}/{n}) — {status}",
+    asst_testRewriteCached: "(من الذاكرة المؤقتة)",
   },
   en: {
     asst_section: "Assistants",
@@ -392,6 +403,17 @@ export default {
     asst_embedNoGpu: "no discrete graphics card",
     asst_embedReindexWarn: "Changing the embedding model requires re-indexing all documents ({n}) when you save.",
     asst_embedReindexAsk: "You changed the embedding model to {name}. The documents ({n}) must be re-indexed before the assistant can search them. Re-index now?",
+    // ---- v2.2.0 test fixes ----
+    asst_arabic_verygood: "Very good",
+    asst_numCtxClamped: "Context length must be between {min} and {max}; set to {n}.",
+    asst_digestShort: "Short — no digest needed",
+    asst_digestShortInfo: "This document is short ({chars} chars), so its own text is used instead of a digest.",
+    asst_digestEditedInfo: "Edited by you · {chars} chars",
+    asst_close: "Close",
+    asst_err_no_text_scanned: "No text found in “{name}”: it looks like a scanned PDF (images only). Upload a copy with OCR text or a .txt file.",
+    asst_err_no_text: "No text found in “{name}”.",
+    asst_uploadingFile: "“{name}” ({i}/{n}) — {status}",
+    asst_testRewriteCached: "(cached)",
   },
 };
 

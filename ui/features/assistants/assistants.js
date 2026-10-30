@@ -16,7 +16,7 @@
 // - Embedding model picker: catalog of Ollama embedding models (embed-catalog.js) with size, Arabic
 //   support, a verdict for this PC (models/catalog.js rateModel on embed + chat model size) and an
 //   "installed" marker; "Other…" allows any tag; download with progress; re-index offer on change.
-// Cross-feature deps: sidebar (closeMobileSidebar), models (loadModels, toGB, modelInstalled, loadCaps,
+// Cross-feature deps: sidebar (closeMobileSidebar), models (loadModels, fmtSize, modelInstalled, loadCaps,
 //   supportsThinking; catalog.js rateModel via embed-catalog.js; its strings rateShort_*, arabic_*,
 //   suggestSize, suggestArabic), chat (send: suggested questions).
 // Events: listens to "current", "models", "language"; emits "current", "focus-composer", "assistants".
@@ -27,10 +27,10 @@ import { $, el, iconButton, toast, openModal, confirmDialog } from "../../core/d
 import { icon } from "../../core/icons.js";
 import { t, registerStrings, getLanguage } from "../../core/i18n.js";
 import { closeMobileSidebar } from "../sidebar/sidebar.js";
-import { loadModels, toGB, modelInstalled, loadCaps, supportsThinking } from "../models/models.js";
+import { loadModels, modelInstalled, loadCaps, supportsThinking, fmtSize } from "../models/models.js";
 import { send } from "../chat/chat.js";
 import strings, { NOT_IN_KNOWLEDGE, REPLY_LANGUAGE } from "./strings.js";
-import { EMBED_CATALOG, findEmbed, describeEmbed, rateEmbed, DEFAULT_EMBED } from "./embed-catalog.js";
+import { EMBED_CATALOG, findEmbed, describeEmbed, rateEmbed, DEFAULT_EMBED, arabicKey } from "./embed-catalog.js";
 
 registerStrings("assistants", strings);
 
@@ -546,6 +546,9 @@ const isEmbedName = n => /embed|bge|minilm|nomic|e5-/i.test(n);
 export const DEEP_NUM_CTX = 16384;
 /** Above this, an 8B model may not fit an 8 GB GPU (the editor warns). */
 export const COMFORT_NUM_CTX = 16384;
+/** Allowed num_ctx range (server: deep::MIN_NUM_CTX / MAX_NUM_CTX). */
+const MIN_NUM_CTX = 2048;
+const MAX_NUM_CTX = 131072;
 const TEXT_PAGE_CHARS = 20000;
 
 let templatesCache = null;
@@ -568,6 +571,7 @@ function digestBadge(d) {
   if (!d.digest) return [t("asst_digestNone"), "none"];
   if (d.digest.status === "failed") return [t("asst_digestFailed"), "failed"];
   if (d.digest.status === "edited") return [t("asst_digestEdited"), "ok"];
+  if (d.digest.status === "short") return [t("asst_digestShort"), "none"];
   return [t("asst_digestOk"), "ok"];
 }
 
@@ -586,7 +590,7 @@ export function openEditor(a) {
   const strict = el("input", { type: "checkbox" });
   const embed = el("input", { class: "input", dir: "ltr", spellcheck: false });
   const deepIn = el("input", { type: "checkbox" });
-  const ctxIn = el("input", { class: "input", type: "number", min: 2048, max: 131072, step: 1024, dir: "ltr" });
+  const ctxIn = el("input", { class: "input", type: "number", min: MIN_NUM_CTX, max: MAX_NUM_CTX, step: 1024, dir: "ltr" });
   const thinkSel = el("select", { class: "input" },
     el("option", { value: "auto" }, t("asst_thinkAuto")),
     el("option", { value: "on" }, t("asst_thinkOn")),
@@ -612,6 +616,18 @@ export function openEditor(a) {
     ctxWarn.lastElementChild.textContent = t("asst_numCtxWarn", { n: COMFORT_NUM_CTX });
   };
   ctxIn.addEventListener("input", renderCtx);
+  // The server clamps num_ctx to [MIN_NUM_CTX, MAX_NUM_CTX]: clamp here too and say so.
+  const clampCtx = () => {
+    const v = Number(ctxIn.value);
+    if (!ctxIn.value.trim() || !(v > 0)) { ctxIn.value = ""; renderCtx(); return; }
+    const n = Math.min(MAX_NUM_CTX, Math.max(MIN_NUM_CTX, Math.round(v)));
+    if (n !== v) {
+      ctxIn.value = String(n);
+      toast(t("asst_numCtxClamped", { min: MIN_NUM_CTX, max: MAX_NUM_CTX, n }), "error", 6000);
+    }
+    renderCtx();
+  };
+  ctxIn.addEventListener("change", clampCtx);
   deepIn.addEventListener("change", renderCtx);
   renderCtx();
 
@@ -628,8 +644,11 @@ export function openEditor(a) {
       if (!ok) return;
     }
     instr.value = text;
-    if (!desc.value.trim()) desc.value = pick(tp.description);
-    if (!iconIn.value.trim() || iconIn.value.trim() === "🤖") iconIn.value = tp.icon;
+    // Description and icon follow the template unless the user wrote their own.
+    const tpls = templatesCache || [];
+    const d0 = desc.value.trim(), i0 = iconIn.value.trim();
+    if (!d0 || tpls.some(x => x.description?.ar === d0 || x.description?.en === d0)) desc.value = pick(tp.description);
+    if (!i0 || i0 === "🤖" || tpls.some(x => x.icon === i0)) iconIn.value = tp.icon;
     instr.focus();
   });
 
@@ -682,7 +701,7 @@ export function openEditor(a) {
         return el("option", { value: m.name }, [
           m.recommended ? `★ ${m.name}` : m.name,
           sizeText(m.sizeGb),
-          `${t("suggestArabic")}: ${t(`arabic_${m.arabic}`)}`,
+          `${t("suggestArabic")}: ${t(arabicKey(m))}`,
           r?.short,
           modelInstalled(m.name) ? `✔ ${t("asst_embedInstalled")}` : null,
         ].filter(Boolean).join(" · "));
@@ -713,7 +732,7 @@ export function openEditor(a) {
         el("p", { class: "suggest-desc" }, describeEmbed(cat)),
         el("div", { class: "suggest-facts" },
           fact(t("suggestSize"), sizeText(cat.sizeGb)),
-          fact(t("suggestArabic"), t(`arabic_${cat.arabic}`)),
+          fact(t("suggestArabic"), t(arabicKey(cat))),
           modelInstalled(cat.name) ? el("span", { class: "suggest-fact" }, `✔ ${t("asst_embedInstalled")}`) : null),
         r ? el("p", { class: "suggest-reason" }, r.reason) : null,
         cg ? el("p", { class: "muted asst-embed-note" }, t("asst_embedWithChat", { chat: chatName(), gb: (Math.round(cg * 10) / 10).toString() })) : null);
@@ -752,7 +771,7 @@ export function openEditor(a) {
         if (p.total) {
           const pct = Math.min(100, ((p.completed || 0) / p.total) * 100);
           setBar(pullBar, pct);
-          text += ` — ${toGB(p.completed)} / ${toGB(p.total)} GB (${pct.toFixed(0)}%)`;
+          text += ` — ${fmtSize(p.completed)} / ${fmtSize(p.total)} (${pct.toFixed(0)}%)`;
         }
         pullText.textContent = text;
       }
@@ -810,7 +829,10 @@ export function openEditor(a) {
     progBox.hidden = false;
     setBar(progBar, p.total ? (p.done / p.total) * 100 : 0);
     const label = t(`asst_status_${p.status}`);
-    progText.textContent = p.total > 1 ? `${label} ${p.done}/${p.total}` : label;
+    const status = p.total > 1 ? `${label} ${p.done}/${p.total}` : label;
+    progText.textContent = p.name && p.files > 1
+      ? t("asst_uploadingFile", { name: p.name, i: p.file, n: p.files, status })
+      : status;
   };
 
   const renderDigestRow = () => {
@@ -855,6 +877,10 @@ export function openEditor(a) {
     for (const f of finals) {
       if (f.error) {
         ok = false;
+        if (f.code === "no_text_scanned" || f.code === "no_text") {
+          toast(t(`asst_err_${f.code}`, { name: f.name || "" }), "error", 9000);
+          continue;
+        }
         const msg = f.missing_model ? missingMsg(f.missing_model) : f.error;
         toast(f.name ? t("asst_docFailed", { name: f.name, error: msg }) : t("asst_failed", { error: msg }), "error", 8000);
       } else if (f.doc) {
@@ -866,21 +892,40 @@ export function openEditor(a) {
     return ok;
   };
 
+  /**
+   * After a cancelled stream the server still finishes the current step and then records
+   * the outcome (e.g. the digest state) and bumps `updated_at`. Wait for that (up to ~8 s)
+   * so the badges don't show the state from before the server confirmed.
+   */
+  const settleAfterCancel = async since => {
+    for (let i = 0; i < 16; i++) {
+      await new Promise(r => setTimeout(r, 500));
+      try {
+        const fresh = await call("GET", `/${enc(current.id)}`);
+        if ((fresh.updated_at || 0) > since) return;
+      } catch { return; }
+    }
+  };
+
   const runOp = async (path, init, digestOp = false) => {
     if (busy) { toast(t("asst_busy")); return false; }
     setBusy(true);
     opCtl = new AbortController();
+    const since = current?.updated_at || 0;
+    let cancelled = false;
     showProgress({ status: digestOp ? "digesting" : "extracting", done: 0, total: 1 });
     try {
       const finals = await streamOp(path, { ...init, signal: opCtl.signal }, showProgress);
       return handleFinals(finals, digestOp);
     } catch (e) {
-      if (e.name === "AbortError") toast(t("asst_cancelled"));
+      if (e.name === "AbortError") { cancelled = true; toast(t("asst_cancelled")); }
+      else if (e.code === "no_text_scanned" || e.code === "no_text") toast(t(`asst_err_${e.code}`, { name: "" }), "error", 9000);
       else toast(e.missingModel ? missingMsg(e.missingModel) : t("asst_failed", { error: e.message }), "error", 8000);
       return false;
     } finally {
       opCtl = null;
       progBox.hidden = true;
+      if (cancelled) await settleAfterCancel(since);
       setBusy(false);
       try { await refresh(); } catch { /* deleted meanwhile */ }
       loadAssistants();
@@ -1001,9 +1046,12 @@ export function openEditor(a) {
       try { text = (await call("GET", `${base}/digest`)).text || ""; } catch { /* none yet */ }
       dgText.value = text;
       const g = doc.digest;
-      dgInfo.textContent = g && g.status !== "failed"
-        ? t("asst_digestInfo", { model: g.model || "—", chars: (g.chars || 0).toLocaleString(getLanguage()) })
-        : g?.status === "failed" ? `${t("asst_digestFailed")}: ${g.error || ""}` : t("asst_digestEmpty");
+      const chars = (g?.chars || 0).toLocaleString(getLanguage());
+      dgInfo.textContent = !g ? t("asst_digestEmpty")
+        : g.status === "failed" ? `${t("asst_digestFailed")}: ${g.error || ""}`
+        : g.status === "edited" ? t("asst_digestEditedInfo", { chars })
+        : g.status === "short" ? t("asst_digestShortInfo", { chars })
+        : t("asst_digestInfo", { model: g.model || "—", chars });
       dgRegen.lastChild.textContent = text ? t("asst_digestRegenerate") : t("asst_digestGenerate");
     };
     dgSave.addEventListener("click", async () => {
@@ -1022,6 +1070,8 @@ export function openEditor(a) {
       if (busy || dgCtl) { toast(t("asst_busy")); return; }
       if (!current.model && !uiModel()) { toast(t("asst_digestNoModel"), "error", 7000); return; }
       dgCtl = new AbortController();
+      const since = current?.updated_at || 0;
+      let cancelled = false;
       setBusy(true);
       dgRegen.disabled = dgSave.disabled = true;
       dgProg.hidden = false;
@@ -1039,11 +1089,12 @@ export function openEditor(a) {
         }, prog);
         handleFinals(finals, true);
       } catch (e) {
-        if (e.name === "AbortError") toast(t("asst_cancelled"));
+        if (e.name === "AbortError") { cancelled = true; toast(t("asst_cancelled")); }
         else toast(e.missingModel ? missingMsg(e.missingModel) : t("asst_failed", { error: e.message }), "error", 8000);
       } finally {
         dgCtl = null;
         dgProg.hidden = true;
+        if (cancelled) { dgProgText.textContent = ""; await settleAfterCancel(since); }
         dgRegen.disabled = dgSave.disabled = false;
         setBusy(false);
         try { await refresh(); await loadDigest(); } catch { /* deleted meanwhile */ }
@@ -1061,7 +1112,7 @@ export function openEditor(a) {
     };
     tabText.addEventListener("click", () => show("text"));
     tabDigest.addEventListener("click", () => show("digest"));
-    const close = el("button", { class: "btn", type: "button", onclick: () => vm.close() }, t("cancel"));
+    const close = el("button", { class: "btn", type: "button", onclick: () => vm.close() }, t("asst_close"));
     const vm = openModal({
       title: el("bdi", {}, d.name),
       className: "asst-modal asst-viewer",
@@ -1101,7 +1152,8 @@ export function openEditor(a) {
       const turn = await buildTurn(a2, messages, testCtl.signal);
       const dbg = turn.debug;
       const tSearch = performance.now();
-      const rw = dbg.rewritten ? el("div", { dir: "auto" }, el("b", {}, `${t("asst_testRewritten")}: `), dbg.rewritten)
+      const rw = dbg.rewritten ? el("div", { dir: "auto" }, el("b", {}, `${t("asst_testRewritten")}: `), dbg.rewritten,
+        dbg.rewrite === "cached" ? el("span", { class: "muted" }, ` ${t("asst_testRewriteCached")}`) : null)
         : el("div", { class: "muted" }, dbg.rewrite === "failed" ? t("asst_testRewriteFailed") : t("asst_testNoRewrite"));
       const passages = dbg.passages.length
         ? el("ol", { class: "asst-test-passages" }, dbg.passages.map((p, i) => el("li", {},
@@ -1115,9 +1167,11 @@ export function openEditor(a) {
             el("div", { class: "asst-src-snippet", dir: "auto" }, p.text)))))
         : el("div", { class: "muted" }, t("asst_testNoPassages"));
       const budget = dbg.budget ? el("div", { class: "muted", dir: "auto" }, t("asst_testBudget", { used: dbg.used, budget: dbg.budget, ctx: dbg.num_ctx })) : null;
-      status.replaceWith(
+      // replaceWith() would print a null/undefined node (e.g. no budget when deep mode is off) as "null".
+      status.replaceWith(...[
         el("div", { class: "asst-test-sec" }, el("b", {}, `${t("asst_testQuery")}: `), el("span", { dir: "auto" }, dbg.query)), rw,
-        el("div", { class: "asst-test-sec" }, el("b", {}, `${t("asst_testPassages")} (${dbg.passages.length})`)), passages, budget);
+        el("div", { class: "asst-test-sec" }, el("b", {}, `${t("asst_testPassages")} (${dbg.passages.length})`)), passages, budget,
+      ].filter(n => n != null));
       // Answer (streamed, not saved).
       const s = state.settings || {};
       const mdl = turn.model || state.model;
@@ -1162,6 +1216,7 @@ export function openEditor(a) {
   const footSpacer = el("span", { class: "spacer" });
 
   saveBtn.addEventListener("click", async () => {
+    clampCtx();
     const ctxVal = Number(ctxIn.value);
     const body = {
       name: name.value.trim(),

@@ -109,7 +109,7 @@ with `{ error: "document too large: …" | "knowledge base too large: …", name
 | GET | `/api/app/assistants/{id}` | – | `Assistant & { index: IndexStatus }` |
 | PUT | `/api/app/assistants/{id}` | `AssistantPatch` (only present fields change; `model: null` clears it) | `Assistant`. Changing `embed_model` makes the index stale → call `/reindex` |
 | DELETE | `/api/app/assistants/{id}` | – | `{ "ok": true }` — removes all its documents and index (missing is fine) |
-| POST | `/api/app/assistants/{id}/docs` | `multipart/form-data` with one or more file fields **or** JSON `{ name, text }` (a note). Query `model=` (optional): chat model for digests when the assistant has none | NDJSON stream (see below); per document a final `{ doc: DocMeta, digest_error?: string }` or `{ error, name, missing_model? }`. For a deep-mode assistant each document is digested after indexing (`digesting` progress); a failed digest only adds `digest_error`. Closing the stream stops after the current step |
+| POST | `/api/app/assistants/{id}/docs` | `multipart/form-data` with one or more file fields **or** JSON `{ name, text }` (a note). Query `model=` (optional): chat model for digests when the assistant has none | NDJSON stream (see below); per document a final `{ doc: DocMeta, digest_error?: string }` or `{ error, name, missing_model?, code? }` (`code`: `"no_text_scanned"` = a PDF without any text, probably images only; `"no_text"` = no text at all). In a multi-file upload, progress lines also carry `{ name, file, files }` (1-based position of the file being processed). For a deep-mode assistant each document is digested after indexing (`digesting` progress); a failed digest only adds `digest_error`. Closing the stream stops after the current step |
 | GET | `/api/app/assistants/{id}/docs/{doc_id}` | – | `{ text, offset, total_chars, chunks, digest_chunks, pages: number \| null, warning: string \| null }` — extracted plain text (e.g. to edit a note). Query `offset=` / `limit=` (characters) return one page of a large document |
 | DELETE | `/api/app/assistants/{id}/docs/{doc_id}` | – | `{ "ok": true }` (its chunks are removed) |
 | POST | `/api/app/assistants/{id}/reindex` | – | NDJSON stream; final `{ assistant: Assistant }` or `{ error, missing_model? }` |
@@ -146,7 +146,7 @@ type DocMeta = { id: string; name: string; kind: "file" | "note"; size: number /
                          | "scanned_pdf"        /* < 80 chars of text per page: probably scanned, needs OCR */;
                  pages?: number; chars?: number;  // PDFs / documents indexed since v2.2
                  digest?: DigestMeta };
-type DigestMeta = { status: "ok" | "edited" | "failed"; model: string; chars: number; chunks: number /* digest chunks in the index */;
+type DigestMeta = { status: "ok" | "edited" | "failed" | "short" /* < 400 chars of text: no digest needed, no file or chunks */; model: string; chars: number; chunks: number /* digest chunks in the index */;
                     created_at: number; millis?: number /* generation time */; error?: string /* status "failed" */ };
 type NewAssistant = { name: string; icon?: string; description?: string; instructions?: string;
                       model?: string; strict?: boolean; embed_model?: string;

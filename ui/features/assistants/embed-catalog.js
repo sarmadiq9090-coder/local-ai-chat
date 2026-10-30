@@ -1,7 +1,7 @@
 // embed-catalog.js — suggested Ollama embedding models for assistants' knowledge search,
 // and a hardware verdict for each (reuses the models feature's rateModel()).
 // Entries: name (exact Ollama tag), sizeGb (download size, ollama.com/library, Oct 2026),
-// params, arabic (good | ok | weak), recommended, desc { ar, en }.
+// params, arabic (verygood | good | ok | weak), recommended, desc { ar, en }.
 // Cross-feature deps: models/catalog.js (rateModel — pure, exported).
 
 import { rateModel } from "../models/catalog.js";
@@ -10,7 +10,7 @@ import { getLanguage } from "../../core/i18n.js";
 export const DEFAULT_EMBED = "bge-m3";
 
 export const EMBED_CATALOG = [
-  { name: "bge-m3", sizeGb: 1.2, params: "0.57B", arabic: "good", recommended: true,
+  { name: "bge-m3", sizeGb: 1.2, params: "0.57B", arabic: "verygood", recommended: true,
     desc: {
       ar: "متعدد اللغات وقوي جدًا في العربية والبحث بين العربية والإنجليزية، ويقبل مقاطع طويلة. الخيار الموصى به لمعظم المساعدين.",
       en: "Multilingual and very strong in Arabic and Arabic↔English search, handles long passages. The recommended choice for most assistants." } },
@@ -57,6 +57,12 @@ export function findEmbed(name) {
   const n = String(name || "").trim().replace(/:latest$/, "");
   return EMBED_CATALOG.find(m => m.name === n) || null;
 }
+
+/**
+ * String key of a catalog entry's Arabic-support label: the models feature's `arabic_*`
+ * (good / ok / weak), or this feature's `asst_arabic_verygood` (bge-m3, as its card says).
+ */
+export const arabicKey = m => (m.arabic === "verygood" ? "asst_arabic_verygood" : `arabic_${m.arabic}`);
 
 /** A catalog entry's description in the UI language. */
 export const describeEmbed = m => m.desc?.[getLanguage()] ?? m.desc?.ar ?? "";

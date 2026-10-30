@@ -27,6 +27,17 @@ pub const REDUCE_INPUT_CHARS: usize = 9000;
 pub const CALL_TIMEOUT: Duration = Duration::from_secs(300);
 /// Index `kind` of digest chunks.
 pub const DIGEST_KIND: &str = "digest";
+/// Documents with fewer characters of text get no digest: the text itself is
+/// shorter than any digest would be, and a model asked to structure a tiny
+/// text invents sections. Their `DigestMeta.status` is [`STATUS_SHORT`].
+pub const MIN_DIGEST_CHARS: usize = 400;
+/// `DigestMeta.status` of a document too short for a digest (no file, no chunks).
+pub const STATUS_SHORT: &str = "short";
+
+/// Whether a document text is long enough to be digested.
+pub fn needs_digest(text: &str) -> bool {
+    text.trim().chars().count() >= MIN_DIGEST_CHARS
+}
 
 /// Cut `text` into windows of at most `size` chars on paragraph (then line,
 /// then hard) boundaries.
@@ -81,36 +92,109 @@ pub fn is_arabic(text: &str) -> bool {
 }
 
 const MAP_AR: &str = "أنت محلل مستندات دقيق. ستُعطى نص مستند (أو جزءًا منه). اكتب ملخصًا منظمًا \
-باللغة العربية فقط، من النص المعطى فقط، دون أي معلومة من خارجه، بهذه العناوين بالضبط:\n\
+باللغة العربية فقط، من النص المعطى فقط، دون أي معلومة من خارجه، بهذه العناوين (احذف أي عنوان لا يوجد له محتوى في النص):\n\
 ## نظرة عامة\n(جملتان أو ثلاث: موضوع النص وغرضه ولمن يُوجَّه)\n\
 ## هيكل المستند\n(عناوين الأقسام/المواد/الفصول كما وردت بأرقامها، مع سطر قصير عن محتوى كل منها)\n\
 ## الحقائق والأرقام الأساسية\n(كل رقم ومبلغ ونسبة وتاريخ ومدة واسم ورقم مادة، منقولًا حرفيًا مع ما يخصه)\n\
 ## الشروط والاستثناءات\n(من يستحق ماذا، ومتى، وما المستثنى)\n\
 ## التعريفات\n(المصطلحات المعرَّفة في النص، إن وجدت)\n\
-اكتب نقاطًا قصيرة دقيقة. لا تخترع ولا تستنتج ما ليس في النص، وانقل الأرقام كما هي. \
-إذا لم يوجد محتوى لعنوان فاكتب تحته «—».";
+اكتب نقاطًا قصيرة دقيقة. اكتب فقط حقائق موجودة صراحةً في النص، ولا تخترع ولا تستنتج \
+ولا تُكمل من عندك، وانقل الأرقام كما هي. إذا لم يوجد في النص محتوى لعنوان فاحذف العنوان كله؛ \
+لا تكتب أبدًا «غير محدد» أو «غير مذكور» أو «لا يوجد»، ولا تضف أقسامًا أو أطرافًا أو تفاصيل ليست \
+في النص. النص القصير ملخصه قصير مثله.";
 
 const MAP_EN: &str = "You are a precise document analyst. You will be given a document (or part \
 of one). Write a structured digest in English only, from the given text only, with no outside \
-information, using exactly these headings:\n\
+information, using these headings (leave out any heading the text has nothing for):\n\
 ## Overview\n(2–3 sentences: what the text is about, its purpose and audience)\n\
 ## Document structure\n(the section/article/chapter titles as written, with their numbers, one short line each)\n\
 ## Key facts and numbers\n(every number, amount, percentage, date, duration, name and article number, quoted exactly with what it refers to)\n\
 ## Conditions and exceptions\n(who is entitled to what, when, and what is excluded)\n\
 ## Definitions\n(terms the text defines, if any)\n\
-Use short, precise bullet points. Do not invent or infer anything that is not in the text; \
-copy numbers exactly. If a heading has no content, write \"—\" under it.";
+Use short, precise bullet points. Write only facts stated in the text: do not invent, infer \
+or fill in anything, and copy numbers exactly. If the text has nothing for a heading, leave the \
+whole heading out; never write \"not specified\", \"not mentioned\" or \"none\", and never add \
+sections, parties or details that are not in the text. A short text gets an equally short digest.";
 
 const REDUCE_AR: &str = "ستُعطى ملخصات منظمة لأجزاء متتالية من مستند واحد. ادمجها في ملخص واحد \
 منظم باللغة العربية بالعناوين نفسها (نظرة عامة، هيكل المستند، الحقائق والأرقام الأساسية، الشروط \
 والاستثناءات، التعريفات). اجعل النظرة العامة من 3 إلى 5 جمل عن المستند كله. احذف التكرار فقط، \
-واحتفظ بكل رقم وتاريخ واسم ورقم مادة كما ورد حرفيًا. لا تضف أي معلومة ليست في الملخصات.";
+واحتفظ بكل رقم وتاريخ واسم ورقم مادة كما ورد حرفيًا. لا تضف أي معلومة ليست في الملخصات، واحذف أي عنوان بلا محتوى ولا تكتب «غير محدد».";
 
 const REDUCE_EN: &str = "You will be given structured digests of consecutive parts of one \
 document. Merge them into one structured digest in English with the same headings (Overview, \
 Document structure, Key facts and numbers, Conditions and exceptions, Definitions). Make the \
 overview 3–5 sentences about the whole document. Remove only repetition; keep every number, \
-date, name and article number exactly as written. Add nothing that is not in the digests.";
+date, name and article number exactly as written. Add nothing that is not in the digests; \
+leave out headings with no content and never write \"not specified\".";
+
+/// Placeholder bodies a model writes under a heading it has nothing for.
+const EMPTY_SECTION_MARKERS: &[&str] = &[
+    "لا يوجد",
+    "لا توجد",
+    "غير محدد",
+    "غير مذكور",
+    "لم يرد",
+    "لم تذكر",
+    "لم يذكر",
+    "none",
+    "n/a",
+    "not specified",
+    "not mentioned",
+    "not provided",
+    "not stated",
+    "no definitions",
+    "no terms",
+    "no conditions",
+    "nothing",
+];
+
+/// Drop `## ` sections whose body is only a placeholder ("—", «لا يوجد…»,
+/// "Not specified"…): they carry no fact from the text and would be
+/// embedded as knowledge. Keeps the digest unchanged otherwise.
+pub fn strip_empty_sections(digest: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut section: Vec<&str> = Vec::new();
+    let flush = |section: &mut Vec<&str>, out: &mut Vec<String>| {
+        if section.is_empty() {
+            return;
+        }
+        let is_heading = section[0].trim_start().starts_with("## ");
+        let body: String = section[1..]
+            .iter()
+            .map(|l| {
+                l.trim()
+                    .trim_start_matches(['-', '*', '•', '(', ' '])
+                    .trim_end_matches([')', '.', '。', ' '])
+            })
+            .filter(|l| !l.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let lower = body.to_lowercase();
+        // "لا يوجد استرجاع للمستعمل" is a fact; "لا يوجد مصطلحات في النص" or
+        // a bare "None" is a placeholder.
+        let about_text = ["النص", "المستند", "الوثيقة", "text", "document"]
+            .iter()
+            .any(|w| lower.contains(w));
+        let placeholder = body.chars().all(|c| matches!(c, '—' | '–' | '-' | ' '))
+            || EMPTY_SECTION_MARKERS.contains(&lower.as_str())
+            || (body.chars().count() <= 80
+                && about_text
+                && EMPTY_SECTION_MARKERS.iter().any(|m| lower.starts_with(m)));
+        if !(is_heading && placeholder) {
+            out.push(section.join("\n"));
+        }
+        section.clear();
+    };
+    for line in digest.lines() {
+        if line.trim_start().starts_with("## ") {
+            flush(&mut section, &mut out);
+        }
+        section.push(line);
+    }
+    flush(&mut section, &mut out);
+    out.join("\n").trim().to_string()
+}
 
 /// Group partial digests so each group is ≤ `max` chars (at least one per group).
 pub fn reduce_groups(parts: &[String], max: usize) -> Vec<Vec<String>> {
@@ -289,7 +373,7 @@ impl AssistantStore {
             }
             parts = next;
         }
-        Ok(parts.pop().unwrap_or_default())
+        Ok(strip_empty_sections(&parts.pop().unwrap_or_default()))
     }
 
     /// Replace the digest chunks of `doc_id` in the index with `digest`'s
@@ -377,6 +461,24 @@ impl AssistantStore {
         };
         let name = a.docs[pos].name.clone();
         let text = self.doc_text(&a.id, doc_id)?.ok_or(NotFound("document"))?;
+        if !needs_digest(&text) {
+            // Too short: the text is its own digest. Drop any earlier digest.
+            if self.digest_text(&a.id, doc_id)?.is_some() || a.docs[pos].digest.is_some() {
+                self.remove_digest_file(&a.id, doc_id);
+                self.store_digest_chunks(ollama_url, a, doc_id, &name, None)
+                    .await?;
+            }
+            let meta = DigestMeta {
+                status: STATUS_SHORT.into(),
+                chars: text.trim().chars().count(),
+                created_at: now_ms(),
+                ..Default::default()
+            };
+            a.docs[pos].digest = Some(meta.clone());
+            a.updated_at = now_ms();
+            self.write(a)?;
+            return Ok(meta);
+        }
         let started = Instant::now();
         let result = async {
             let digest = self
@@ -560,6 +662,34 @@ mod tests {
         assert_eq!(g.iter().map(Vec::len).collect::<Vec<_>>(), vec![3, 1]);
         let g = reduce_groups(&[p(10_000), p(10_000)], 9000);
         assert_eq!(g.len(), 2); // caller then merges pairs
+    }
+
+    #[test]
+    fn placeholder_sections_are_dropped() {
+        let d = "## نظرة عامة\nسياسة الإجازات.\n\n## الشروط والاستثناءات\n- لا يوجد استرجاع للمستعمل.\n\n\
+                 ## التعريفات\nلا يوجد مصطلحات معرَّفة في النص.\n\n## أطراف\n—\n\n## Parties Involved\n- Not specified";
+        assert_eq!(
+            strip_empty_sections(d),
+            "## نظرة عامة\nسياسة الإجازات.\n\n## الشروط والاستثناءات\n- لا يوجد استرجاع للمستعمل."
+        );
+        let en = "## Overview\nA price list.\n\n## Definitions\nNone.\n\n## Key facts and numbers\n- Tea: 2 USD";
+        assert_eq!(
+            strip_empty_sections(en),
+            "## Overview\nA price list.\n\n## Key facts and numbers\n- Tea: 2 USD"
+        );
+    }
+
+    #[test]
+    fn short_documents_are_not_digested() {
+        assert!(!needs_digest("الرمز البريدي هو 10011."));
+        assert!(needs_digest(&"كلمة ".repeat(100)));
+        // The prompts forbid placeholders and invented sections.
+        for p in [MAP_AR, REDUCE_AR] {
+            assert!(p.contains("غير محدد"), "{p}");
+        }
+        for p in [MAP_EN, REDUCE_EN] {
+            assert!(p.contains("not specified"), "{p}");
+        }
     }
 
     #[test]

@@ -829,7 +829,13 @@ async fn deep_mode_digest_context_and_cleanup() {
         ctx.rewritten.as_deref(),
         Some("housing allowance for managers")
     );
-    assert_eq!(ctx.queries.len(), 2);
+    // Message, rewrite, and previous question + message.
+    assert_eq!(ctx.queries.len(), 3);
+    assert_eq!(
+        ctx.queries[2],
+        "What is the housing allowance for grade 3?
+and for managers?"
+    );
     assert_eq!(ctx.num_ctx, deep::DEEP_NUM_CTX);
     assert!(ctx.think);
     assert!(!ctx.passages.is_empty());
@@ -956,7 +962,7 @@ async fn old_assistants_load_with_deep_off_and_digest_failure_is_recorded() {
             &url,
             id,
             "n",
-            DocInput::Note("Some note text about parking.".into()),
+            DocInput::Note("Some note text about parking. ".repeat(20)),
             |_| {},
         )
         .await
@@ -989,5 +995,66 @@ async fn old_assistants_load_with_deep_off_and_digest_failure_is_recorded() {
     assert!(!store.index_status(id).await.unwrap().stale);
     let r = store.search(&url, id, "parking note", None).await.unwrap();
     assert_eq!(r[0].doc_id, doc.id);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn tiny_documents_get_no_digest() {
+    let url = fake_ollama().await;
+    let (store, dir) = temp_store(reqwest::Client::new());
+    let a = store
+        .create(NewAssistant {
+            name: "Tiny".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    let doc = store
+        .add_document(
+            &url,
+            &a.id,
+            "n",
+            DocInput::Note("الرمز البريدي هو 10011.".into()),
+            |_| {},
+        )
+        .await
+        .unwrap();
+    let never = || false;
+    let job = digest::DigestJob {
+        model: "m",
+        num_ctx: 8192,
+        cancelled: &never,
+    };
+    let mut results = Vec::new();
+    store
+        .digest_documents(
+            &url,
+            &a.id,
+            None,
+            false,
+            &job,
+            |_| {},
+            |_, _, r| results.push(r.map(|m| m.status).map_err(|e| e.to_string())),
+        )
+        .await
+        .unwrap();
+    assert_eq!(results, vec![Ok(digest::STATUS_SHORT.to_string())]);
+    assert!(store.digest_text(&a.id, &doc.id).unwrap().is_none());
+    let st = store.index_status(&a.id).await.unwrap();
+    assert_eq!(st.digest_chunks, 0);
+    assert!(!st.stale);
+    // Not offered again, and a re-index keeps the "short" state.
+    let mut n = 0;
+    store
+        .digest_documents(&url, &a.id, None, false, &job, |_| {}, |_, _, _| n += 1)
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+    let after = store.reindex(&url, &a.id, |_| {}).await.unwrap();
+    assert_eq!(
+        after.docs[0].digest.as_ref().unwrap().status,
+        digest::STATUS_SHORT
+    );
+    assert!(digest::needs_digest(&"x".repeat(digest::MIN_DIGEST_CHARS)));
+    assert!(!digest::needs_digest("  short  "));
     let _ = std::fs::remove_dir_all(dir);
 }

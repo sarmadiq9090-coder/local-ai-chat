@@ -100,6 +100,11 @@
 .asst-deep-help { margin: 0; margin-inline-start: 28px; font-size: 12.5px; line-height: 1.6; }
 .asst-advanced > summary { cursor: pointer; font-size: 13px; color: var(--muted); padding-block: 2px; }
 .asst-advanced[open] > summary { margin-block-end: 8px; }
+/* The thinking choice ("Automatic (on in deep understanding)") must not be cut off. */
+.asst-advanced .field-row { flex-wrap: wrap; }
+.asst-advanced .field-row > .field { flex: 1 1 12rem; min-width: 0; }
+.asst-advanced .field-row > .field:last-child { flex-basis: 18rem; }
+.asst-advanced select.input { inline-size: 100%; text-overflow: clip; }
 .asst-warn-line { display: flex; align-items: flex-start; gap: 6px; font-size: 12.5px; line-height: 1.5; color: var(--danger); margin-block-start: 6px; }
 .asst-warn-line > span:first-child { display: inline-flex; padding-block-start: 2px; }
 .asst-digest-row {
