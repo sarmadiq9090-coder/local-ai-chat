@@ -56,6 +56,8 @@ Planned (see [ROADMAP.md](ROADMAP.md), Arabic):
 |---|---|
 | ![English UI](docs/screenshots/home-en.png) | ![Arabic UI](docs/screenshots/home-ar.png) |
 
+![Live preview: a tiny canvas game running next to its code](docs/screenshots/preview-en.png)
+
 ## Requirements
 
 - **Windows 10 or 11** (64-bit).

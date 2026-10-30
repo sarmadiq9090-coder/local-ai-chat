@@ -19,6 +19,8 @@
 
 ![الواجهة العربية](docs/screenshots/home-ar.png)
 
+![المعاينة المباشرة: لعبة صغيرة تعمل بجانب الكود](docs/screenshots/preview-en.png)
+
 ## التثبيت
 
 1. ثبّت [Ollama](https://ollama.com/download).
