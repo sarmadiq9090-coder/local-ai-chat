@@ -5,7 +5,7 @@
 
 export default {
   ar: {
-    appTitle: "الذكاء المحلي",
+    appTitle: "Lemon",
     conversationsLabel: "المحادثات",
     untitled: "محادثة جديدة",
     delete: "حذف",
@@ -20,7 +20,7 @@ export default {
     confirm: "تأكيد",
   },
   en: {
-    appTitle: "Local AI Chat",
+    appTitle: "Lemon",
     conversationsLabel: "Conversations",
     untitled: "New chat",
     delete: "Delete",

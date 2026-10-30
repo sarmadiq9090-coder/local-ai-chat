@@ -1,8 +1,8 @@
-# Local AI Chat
+# 🍋 Lemon — Local AI Chat
 
 [العربية](README.md) · **English**
 
-**Local AI Chat** (Arabic: «الذكاء المحلي») is a lightweight Windows desktop app
+**Lemon** (Local AI Chat) is a lightweight Windows desktop app
 for chatting and coding with AI models that run **entirely on your own PC**
 through [Ollama](https://ollama.com). It is a single `.exe` with its own
 window, an Arabic-first (RTL) interface with an English translation, and no

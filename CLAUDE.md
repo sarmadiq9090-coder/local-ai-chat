@@ -1,9 +1,14 @@
-# CLAUDE.md — Local AI Chat
+# CLAUDE.md — Lemon (Local AI Chat)
 
 Windows desktop chat client for local models via [Ollama](https://ollama.com). One `.exe`:
 a Rust (axum) server on `127.0.0.1:<random port>` serves the UI (vanilla ES modules, embedded
 with rust-embed) and a JSON API; a native window (tao + WebView2/wry) shows it. Arabic-first
 (RTL) UI. API contract: `docs/API.md`. Plans: `ROADMAP.md`. User docs (Arabic): `README.md`.
+
+**Naming:** the product name is **Lemon** (window title, UI, docs). For compatibility with existing
+installs and auto-update, these keep the old technical names — do NOT rename them: the exe /
+release asset `local-ai-chat.exe`, the crate `local-ai-chat`, the GitHub repo
+`sarmadiq9090-coder/local-ai-chat` (`update::REPO`), and the data folders `LocalAiChat`.
 
 ## Build & run
 

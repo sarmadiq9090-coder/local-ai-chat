@@ -1,6 +1,6 @@
 //! Single-instance guard: a second launch focuses the existing window and exits.
 
-pub const WINDOW_TITLE: &str = "الذكاء المحلي";
+pub const WINDOW_TITLE: &str = "Lemon";
 
 /// Holds the named mutex for the lifetime of the app.
 pub struct Guard {

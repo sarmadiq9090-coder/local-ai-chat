@@ -1,4 +1,4 @@
-# الذكاء المحلي (Local AI Chat)
+# 🍋 Lemon — Local AI Chat
 
 **[English](README.en.md)** · العربية
 
