@@ -8,6 +8,9 @@
 //   features/settings with the settings form) and appends an "Updates" section
 //   (auto-check toggle — part of the dialog draft: saved on Save, dropped on Cancel;
 //   "Check for updates" button whose result stays visible across dialog rebuilds).
+// - An install refused because the update's signature is missing or invalid
+//   (`code: "signature"`, docs/specs/signing.md) shows a dedicated message with
+//   links to download manually; the current version is kept.
 // Cross-feature deps: settings (settingsLoaded, "settings-open" draft protocol), core/api (getUpdateInfo, installUpdate).
 
 import { state, on } from "../../core/state.js";
@@ -22,6 +25,9 @@ import strings from "./strings.js";
 registerStrings("update", strings);
 
 const RECHECK_MS = 6 * 60 * 60 * 1000;
+// Manual download pages offered when an update can't be verified (opened in the browser).
+const RELEASES_URL = "https://github.com/sarmadiq9090-coder/local-ai-chat/releases";
+const SITE_URL = "https://fastkiwi.app/";
 
 let info = null;        // last /update/check response
 let button = null;      // sidebar footer button
@@ -69,6 +75,11 @@ export function openUpdateModal() {
 
   const bar = el("progress", { class: "upd-progress", max: 1, value: 0, hidden: true });
   const statusLine = el("div", { class: "upd-status muted", dir: "auto", hidden: true });
+  const sigFail = el("div", { class: "upd-sig-fail", role: "alert", hidden: true },
+    el("p", { dir: "auto" }, t("upd_sig_failed")),
+    el("p", { class: "upd-sig-links", dir: "auto" },
+      el("a", { href: RELEASES_URL, target: "_blank", rel: "noopener noreferrer" }, t("upd_sig_releases")),
+      el("a", { href: SITE_URL, target: "_blank", rel: "noopener noreferrer", dir: "ltr" }, t("upd_sig_site"))));
   const laterBtn = el("button", { class: "btn", type: "button", onclick: () => m.close() }, t("upd_later"));
   const nowBtn = el("button", { class: "btn primary", type: "button" }, t("upd_now"));
 
@@ -81,6 +92,7 @@ export function openUpdateModal() {
   nowBtn.addEventListener("click", async () => {
     installing = true;
     nowBtn.disabled = laterBtn.disabled = true;
+    sigFail.hidden = true;
     bar.hidden = false;
     bar.removeAttribute("value"); // indeterminate until sizes arrive
     let restarting = false;
@@ -109,6 +121,13 @@ export function openUpdateModal() {
       installing = false;
       bar.hidden = true;
       nowBtn.disabled = laterBtn.disabled = false;
+      if (e.code === "signature") {
+        // Not verifiable: never installed. Explain and offer the manual download.
+        statusLine.hidden = true;
+        sigFail.hidden = false;
+        toast(t("upd_sig_toast"), "error", 8000);
+        return;
+      }
       setStatus(t("upd_failed", { error: e.message }), "err");
       toast(t("upd_failed", { error: e.message }), "error", 8000);
     }
@@ -120,7 +139,7 @@ export function openUpdateModal() {
     body: el("div", { class: "upd-body" },
       el("p", { class: "upd-version", dir: "auto" }, t("upd_version", { latest: info.latest, current: info.current })),
       date && el("p", { class: "upd-date muted", dir: "auto" }, t("upd_published", { date })),
-      notes, bar, statusLine),
+      notes, bar, statusLine, sigFail),
     actions: [laterBtn, nowBtn],
     beforeClose: () => !installing,
   });

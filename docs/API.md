@@ -195,11 +195,15 @@ Source: GitHub `releases/latest` of `sarmadiq9090-coder/local-ai-chat` (const `u
 `LOCALAI_UPDATE_FEED=<url>` returning JSON shaped like a GitHub release. Asset and checksum URLs
 (and redirects) must be `https://`; plain `http://` to `127.0.0.1` / `localhost` is accepted only
 while that override is set. Downloads are capped at 200 MB (exe) and 1 KB (`.sha256`).
+Signature (spec: `docs/specs/signing.md`): once `update::TRUSTED_PUBLIC_KEYS` is not empty (compile
+time), the release must also have `local-ai-chat.exe.minisig` (≤ 4 KB), a minisign signature of the exe
+by a trusted key with the trusted comment exactly `local-ai-chat v<version>`; otherwise the install is
+refused. With an empty key list (current builds) only the sha256 is checked. Same rules with the override.
 
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/api/app/update/check` | – | `UpdateCheck`. Query: `force=1` bypasses the 10-min cache; `local=1` skips the network (cached result or just `current`). Network problems never give a 5xx: `available: false` + `error`. No release / repo not found (404) → `available: false`, no `error`. |
-| POST | `/api/app/update/install` | – | NDJSON stream: `{ "status": "downloading", "downloaded": number, "total": number \| null }` … `{ "status": "verifying" }` … `{ "status": "restarting" }`, or a final `{ "error": string }` (no update, insecure URL, download failed or too large, checksum mismatch, swap failed — the current exe is left in place). After `restarting` the exe was swapped (old one → `local-ai-chat.old.exe`), the new exe was started with `--after-update` (plus `--serve <port>` in dev mode) and this process exits ~1 s later. |
+| POST | `/api/app/update/install` | – | NDJSON stream: `{ "status": "downloading", "downloaded": number, "total": number \| null }` … `{ "status": "verifying" }` … `{ "status": "restarting" }`, or a final `{ "error": string, "code"?: "signature" }` (no update, insecure URL, download failed or too large, checksum mismatch, signature missing/invalid → `code: "signature"`, swap failed — the current exe is left in place). After `restarting` the exe was swapped (old one → `local-ai-chat.old.exe`), the new exe was started with `--after-update` (plus `--serve <port>` in dev mode) and this process exits ~1 s later. |
 
 ```ts
 type UpdateCheck = {

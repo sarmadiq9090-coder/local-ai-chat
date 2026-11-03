@@ -41,6 +41,8 @@ cargo build --release
 
 المتطلبات: Rust (MSVC)، WebView2 (موجود في ويندوز 11)، و Ollama.
 
+نشر إصدار جديد وتوقيعه (للمالك): [RELEASING.md](RELEASING.md).
+
 ## هيكل المشروع
 
 ```
