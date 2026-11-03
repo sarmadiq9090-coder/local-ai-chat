@@ -4,7 +4,7 @@ All endpoints are served by the Rust backend on the same origin as the UI (`http
 JSON in / JSON out unless noted. Errors: non-2xx status with body `{"error": "message"}` — including
 request rejections under `/api/app` (malformed JSON → 400, wrong field types → 422, missing
 `Content-Type` → 415, bad path/query → 400, body over 64 MB → 413, wrong method → 405, unknown
-`/api/...` route → 404), the request guard's 403 (foreign `Host`/`Origin`), and a 413 for an oversized
+`/api/...` route → 404), the request guard's 403 (foreign `Host`/`Origin`, or a `Sec-Fetch-Site` other than `same-origin`/`none`), and a 413 for an oversized
 body on `/api/ollama/*`. Some errors add a machine-readable `"code"` (and a technical `"detail"`) so the
 UI can show a localized message: `ollama_unreachable` (502), `corrupt` (500), `invalid_ollama_url` (400).
 
