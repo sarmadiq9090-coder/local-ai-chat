@@ -18,7 +18,7 @@ server on `127.0.0.1` serves an embedded HTML/JS UI to a native
 
 ## Features
 
-Available now (v2.1):
+Available now (v2.2):
 
 - One portable `.exe`, its own window and icon; only one instance runs at a time.
 - ChatGPT/Claude-style chat UI in **Arabic and English** — switch live in Settings,

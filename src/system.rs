@@ -235,6 +235,7 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
     #[test]
     fn probe_runs() {
         let s = probe();
