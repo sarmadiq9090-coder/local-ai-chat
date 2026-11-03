@@ -23,6 +23,7 @@ import exporter from "./exporter/exporter.js";
 import code from "./code/code.js";
 import assistants from "./assistants/assistants.js";
 import update from "./update/update.js";
+import crash from "./crash/crash.js";
 
 export default [
   models,        // Esc 1: model dropdown
@@ -36,4 +37,5 @@ export default [
   code,
   assistants,
   update,
+  crash,
 ];

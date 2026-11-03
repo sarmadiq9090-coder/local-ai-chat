@@ -16,6 +16,7 @@
 
 mod assistants;
 mod config;
+mod crash_log;
 mod error;
 mod ollama;
 mod server;
@@ -37,6 +38,8 @@ const AFTER_UPDATE_STUCK: &str = concat!(
 );
 
 fn main() -> anyhow::Result<()> {
+    // First: record any panic to <data dir>\crash.txt (the release exe has no console).
+    crash_log::install();
     // Developer mode: `local-ai-chat --serve [port]` runs only the server (no
     // window, no single-instance lock). In debug builds the UI is read from
     // `ui/` on disk, so UI edits show up on browser refresh without rebuilding.

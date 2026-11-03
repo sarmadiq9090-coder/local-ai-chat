@@ -1,5 +1,41 @@
 # CLAUDE.md — Lemon (Local AI Chat)
 
+## Owner & workflow (shared rules, same in every repo)
+
+Owner: Sarmad (`sarmadiq9090-coder`). Writes Arabic, is not technical in English, and works only
+through Claude sessions, with no fixed computer.
+
+- Reply to the owner in Arabic. Keep code, identifiers, commit messages and PR titles in English,
+  and give PR bodies an Arabic summary first.
+- Never push to the default branch. Work on `claude/<topic>`, open a PR, and let the owner merge
+  unless they explicitly say "ادمج" (merge).
+- One Claude session per repository at a time. Before starting, check open PRs and recently pushed
+  `claude/*` branches. If another session is active, coordinate through it instead of editing the
+  same files.
+- The owner has no fixed computer: never ask them to keep files, keys or tools on a PC. Use GitHub
+  (Environments/secrets, Codespaces) or their password manager.
+- **Weekly release train.**
+  - All improvements, additions and changes to a published app ship to users ONCE a week, together.
+    This covers new versions and tags, website (fastkiwi.app) updates, and package-manager
+    (winget/Scoop/Chocolatey) manifest updates.
+  - Release day is Friday 09:00 (Asia/Baghdad). The weekly health check in the owner's manager
+    session runs just before it and prepares the train; the owner approves it.
+  - A release goes out only after CI is green on Linux and Windows.
+  - During the week, work goes to `claude/*` branches or PRs, or is merged to the default branch
+    WITHOUT bumping the version or pushing a tag.
+  - arabic-file-search's build.yml publishes a release automatically when the Cargo.toml version
+    changes on main, so bump the version only on release day.
+  - github.io deploys on every push to main, so merge site PRs only on release day.
+  - Exceptions: mawared-desktop, and new apps that have never been published. These may release
+    whenever needed.
+  - A critical security fix may go out early, only with the owner's explicit approval.
+- Things only the owner can do: repo settings, deleting branches or repos, money decisions, secrets,
+  merging. Ask, and give exact click-by-click steps in Arabic.
+- Don't enable features that write to third-party systems, or anything security-sensitive, without
+  the owner's explicit approval.
+- Commit only your own files (`git add <paths>`).
+- Commit trailer: `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+
 Windows desktop chat client for local models via [Ollama](https://ollama.com). One `.exe`:
 a Rust (axum) server on `127.0.0.1:<random port>` serves the UI (vanilla ES modules, embedded
 with rust-embed) and a JSON API; a native window (tao + WebView2/wry) shows it. Arabic-first
