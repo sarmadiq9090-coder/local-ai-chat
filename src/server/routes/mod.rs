@@ -10,6 +10,7 @@ use super::AppState;
 
 mod assistants;
 mod conversations;
+mod crash;
 mod export;
 mod settings;
 mod status;
@@ -25,4 +26,5 @@ pub fn router() -> Router<AppState> {
         .merge(system::router())
         .merge(assistants::router())
         .merge(update::router())
+        .merge(crash::router())
 }

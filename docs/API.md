@@ -213,6 +213,19 @@ type UpdateCheck = {
 };
 ```
 
+## Crash notice — `/api/app/crash...`
+
+Implemented in `src/server/routes/crash.rs` + `src/crash_log.rs`. A panic hook (installed first thing in
+`main`) appends an entry (UTC time, version, thread, message, location, backtrace) to
+`<data dir>\crash.txt`, keeping the newest ~64 KB of whole entries. `crash.seen` beside it marks the
+last time the UI showed the notice.
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/api/app/crash` | – | `{ "new": bool, "path": string }` — `new`: `crash.txt` is newer than `crash.seen` (or exists without it) |
+| POST | `/api/app/crash/seen` | – | `{ "ok": bool }` — touches `crash.seen` |
+| POST | `/api/app/crash/open` | – | `{ "ok": bool }` — opens Explorer with `crash.txt` selected |
+
 ## Static UI (everything else)
 
 Embedded `ui/` files. Every response has `X-Content-Type-Options: nosniff`. `/` (`index.html`) also

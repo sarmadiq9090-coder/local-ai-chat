@@ -92,3 +92,9 @@ export const pullModel = (model, signal) => streamPost("/api/ollama/pull", { mod
 export const getUpdateInfo = (params = {}) => request("GET", `/api/app/update/check?${new URLSearchParams(params)}`);
 /** Install the available update. Yields {status:"downloading", downloaded, total} | {status:"verifying"} | {status:"restarting"}. */
 export const installUpdate = signal => streamPost("/api/app/update/install", {}, signal);
+
+// ---------- crash notice (features/crash) ----------
+/** {new: bool, path} — crash.txt changed since the notice was last shown. */
+export const getCrashInfo = () => request("GET", "/api/app/crash");
+export const markCrashSeen = () => request("POST", "/api/app/crash/seen");
+export const openCrashFolder = () => request("POST", "/api/app/crash/open");
