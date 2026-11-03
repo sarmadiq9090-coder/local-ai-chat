@@ -111,6 +111,16 @@ New shared state goes on `AppState` in `server/mod.rs`; new settings fields go i
 - Use colors from theme tokens (`var(--text)`, `--accent`…) defined in `core/base.css`; add new tokens
   for both `:root` (dark) and `[data-theme="light"]`.
 
+## Releasing
+
+A release happens by **merging a PR into `main` that bumps `version` in `Cargo.toml`**
+(Friday train only), with a matching `## [x.y.z]` section in `CHANGELOG.md` (it becomes the
+release notes). No tag push is needed: `.github/workflows/release.yml` sees that tag
+`v<version>` doesn't exist, builds, waits for the owner's approval in the `release` Environment,
+signs, and `gh release create v<version> --target <sha>` makes the tag. A merge with an unchanged
+version only runs a quick version check. Never bump the version outside a release PR, and never
+push tags. Owner steps (Arabic): `RELEASING.md`; details: `docs/specs/signing.md`.
+
 ## Before reporting done
 
 1. `cargo check` (no new warnings) and `cargo test`.

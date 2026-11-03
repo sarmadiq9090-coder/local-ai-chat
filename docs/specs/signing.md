@@ -24,7 +24,7 @@ signed exe cannot be replayed as a newer version.
 |---|---|
 | upload or replace release assets (token, collaborator, compromised action in `publish`) | **Blocked.** No secret key, so no valid `.minisig`. The update is refused. |
 | re-publish an older signed exe under a new tag | **Blocked.** The trusted comment names the old version. |
-| push a `v*` tag to start the release workflow | The `sign` job **waits for the owner's approval** in the `release` Environment. Approve only runs you started yourself. |
+| push a `v*` tag, or a version bump to `main`, to start the release workflow | The `sign` job **waits for the owner's approval** in the `release` Environment. Approve only runs you started yourself. |
 | delete the `.minisig`, or serve a broken one | **Blocked.** A missing or invalid signature means refuse, never fall back. |
 | change the app's key list | Only through a signed release, so they would need the key first. |
 | compromise the **build** (malicious dependency or action in `build`) | **Not covered by signing**: the owner approves, and CI signs whatever was built. Mitigated by SHA-pinned actions, `--locked`, no build cache, Dependabot review, and the provenance attestation for audit. |
@@ -74,16 +74,24 @@ with keys. That first update is itself checked by sha256 only.
 Top-level `permissions: contents: read`. Every `uses:` is pinned to a commit SHA,
 and `.github/dependabot.yml` bumps them weekly.
 
+Triggers: a push to `main` (releases only when the `Cargo.toml` version has no
+`v<version>` tag yet, so releasing = merging a version-bump PR), a manual `v*` tag
+push (kept for compatibility), and `workflow_dispatch` (dry run). Concurrency group
+`release`, never cancelled in progress. On `main` the tag is created by `publish`
+(`gh release create --target <sha>`); a tag made with `GITHUB_TOKEN` does not
+start another run.
+
 | Job | Runs on | Token / secrets | Does |
 |---|---|---|---|
-| `build` | windows | `contents: read`, no secrets, no cache, checkout with `persist-credentials: false` | Checks that the tag is `v<Cargo version>` with no leading zeros and no `+build`. Runs the tests and `--release --locked` build, writes `.sha256` and the tag-message notes, and uploads artifact `release-dist`. |
-| `sign` | ubuntu | Environment **`release`** (owner approval, `v*` only). `MINISIGN_SECRET_KEY`, `MINISIGN_PASSWORD`. `contents: read` | Runs **no repository code**. It downloads the artifact, checks the sha256, and installs minisign 0.12 from the pinned release URL with a pinned sha256. It fetches `keys/minisign-{primary,backup}.pub` at the tag commit through the API, then runs `minisign -S -t "local-ai-chat <tag>"`. It checks the result with `minisign -Vm` against the committed public keys, including the exact trusted comment, and uploads artifact `release-sig`. It fails if the secret or the public keys are missing. |
-| `publish` | ubuntu | `contents: write`, `id-token: write`, `attestations: write` | Checks the sha256 and that all 3 files exist, then runs `actions/attest-build-provenance` on the exe. Runs `gh release create --draft --verify-tag` with `local-ai-chat.exe`, `local-ai-chat.exe.sha256` and `local-ai-chat.exe.minisig`. Checks that the draft has exactly those 3 non-empty assets, then `gh release edit --draft=false`. |
+| `version` | ubuntu | `contents: read`, no checkout | Reads `Cargo.toml` at the commit through the API and asks whether tag `v<version>` exists. Outputs `new=true` for a `main` push with no such tag, or for a tag push (which must equal `v<Cargo version>`). When releasing, checks the tag has no leading zeros and no `+build`. With `new=false` every other job is skipped. |
+| `build` | windows | `contents: read`, no secrets, no cache, checkout with `persist-credentials: false` | Runs the tests and `--release --locked` build, writes `.sha256` and the notes (the tag message, or the `## [<version>]` section of `CHANGELOG.md` on `main`), and uploads artifact `release-dist`. |
+| `sign` | ubuntu | Environment **`release`** (owner approval; branch `main` and `v*` tags only). `MINISIGN_SECRET_KEY`, `MINISIGN_PASSWORD`. `contents: read` | Runs **no repository code**. It downloads the artifact, checks the sha256, and installs minisign 0.12 from the pinned release URL with a pinned sha256. It fetches `keys/minisign-{primary,backup}.pub` at the release commit through the API, then runs `minisign -S -t "local-ai-chat <tag>"`. It checks the result with `minisign -Vm` against the committed public keys, including the exact trusted comment, and uploads artifact `release-sig`. It fails if the secret or the public keys are missing. |
+| `publish` | ubuntu | `contents: write`, `id-token: write`, `attestations: write` | Checks the sha256 and that all 3 files exist, then runs `actions/attest-build-provenance` on the exe. Deletes stale drafts of the same tag, then runs `gh release create --draft` (`--target <sha>` on `main`, `--verify-tag` for a tag push) with `local-ai-chat.exe`, `local-ai-chat.exe.sha256` and `local-ai-chat.exe.minisig`. Checks that the draft has exactly those 3 non-empty assets, then `gh release edit --draft=false` and checks the tag points at the commit. |
 | `dry-run` | windows | `contents: read`, no secrets | Runs only on manual **Run workflow** (`workflow_dispatch`). It makes a throwaway key, signs the built exe with `local-ai-chat v<version>`, and verifies it with `minisign -Vm`. It also runs the app's verifier (`cargo test ci_dry_run_signature -- --ignored`). It never creates a release. |
 
 Draft safety: `releases/latest` never returns drafts, and 2.2.0 clients reject
 drafts. A half-made release is never offered. If `publish` fails after creating
-the draft, delete the draft and re-run the job.
+the draft, re-run the failed jobs: the stale draft is deleted first.
 
 Asset names are fixed. 2.2.0 and older require both `local-ai-chat.exe` and
 `local-ai-chat.exe.sha256`, and refuse the release without them.
@@ -95,7 +103,9 @@ a throw-away **GitHub Codespace**. The steps are in Arabic in `RELEASING.md`. In
 short:
 
 1. Create the `release` Environment. Set the owner as **required reviewer**, and
-   set **Deployment branches and tags** to selected tags, `v*`.
+   set **Deployment branches and tags** to branch `main` plus tags `v*`. The tag
+   ruleset restricts tag updates and deletions but not creations, since CI
+   creates the tag.
 2. Open a Codespace on the repo from the browser and install `minisign`. Run
    `minisign -G` twice, outside the repo folder: once for `primary` and once for
    `backup`, each with a strong password.

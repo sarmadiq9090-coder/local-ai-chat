@@ -25,7 +25,7 @@ The user's words: *"Make an auto-update button."*
 - Routes (`src/server/routes/update.rs`): `GET /api/app/update/check` → `{ current, latest?, available, notes?, published_at? }`; `POST /api/app/update/install` → NDJSON `{status, downloaded, total}` … `{status:"restarting"}`.
 
 ## Release side (CI)
-`.github/workflows/release.yml` on tag `v*`: `build` (windows, no secrets) → `sign` (`release` Environment, owner approval, minisign) → `publish` (attestation, draft release with `local-ai-chat.exe` + `local-ai-chat.exe.sha256` + `local-ai-chat.exe.minisig`, all three checked, then published). The first two asset names must never change: 2.2.0 and older clients require both. Details: `docs/specs/signing.md`.
+`.github/workflows/release.yml` on a push to `main` whose `Cargo.toml` version has no `v<version>` tag yet (or a manual `v*` tag push): `version` (quick check) → `build` (windows, no secrets) → `sign` (`release` Environment, owner approval, minisign) → `publish` (attestation, draft release with `local-ai-chat.exe` + `local-ai-chat.exe.sha256` + `local-ai-chat.exe.minisig`, all three checked, then published). The first two asset names must never change: 2.2.0 and older clients require both. Details: `docs/specs/signing.md`.
 
 ## UI
 Feature folder `ui/features/update/` (button, modal, settings section) with ar + en strings.

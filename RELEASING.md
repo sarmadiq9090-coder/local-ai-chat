@@ -14,14 +14,19 @@
 ### 2. أنشئ بيئة `release` بموافقتك
 في صفحة المستودع: **Settings → Environments → New environment**، واكتب الاسم `release` بالضبط، ثم:
 - **Required reviewers**: أضف نفسك. لا تفعّل «Prevent self-review»، لأنك أنت من ينشر وأنت من يوافق.
-- **Deployment branches and tags**: اختر **Selected branches and tags**، ثم **Add deployment branch or tag rule**، والنوع **Tag**، والنمط `v*`.
+- **Deployment branches and tags**: اختر **Selected branches and tags**، ثم أضف قاعدتين عبر **Add deployment branch or tag rule**:
+  - النوع **Branch** والاسم `main` (الإصدار يبدأ الآن من الدمج في `main`).
+  - النوع **Tag** والنمط `v*` (للوسوم اليدوية القديمة).
+
+  إن كنت أنشأت البيئة سابقًا بقاعدة `v*` وحدها فأضف قاعدة `main`، وإلا ستفشل مهمة `sign` برسالة أن الفرع `main` غير مسموح له.
 
 ### 3. احمِ وسوم الإصدارات
 **Settings → Rules → Rulesets → New ruleset → New tag ruleset**:
 - الاسم: `release tags`، و**Enforcement**: Active.
 - **Target tags**: Include by pattern ← `v*`.
-- القواعد: Restrict creations، Restrict updates، Restrict deletions.
+- القواعد: Restrict updates، Restrict deletions.
 - **Bypass list**: Repository admin (أنت).
+- **لا تفعّل Restrict creations**: صار GitHub Actions هو من ينشئ الوسم عند النشر، وهذه القاعدة ستمنعه. إن كانت مفعّلة من قبل فألغها. الحماية الأساسية باقية: لا يُوقَّع شيء بلا موافقتك.
 
 يُنصح أيضًا بتفعيل **Release immutability** من **Settings → General → Releases** إن كان الخيار ظاهرًا، فلا يمكن تعديل ملفات الإصدار بعد نشره.
 
@@ -67,14 +72,18 @@
 
 ## كل إصدار
 
-1. أنشئ الوسم `vX.Y.Z` المطابق لـ `version` في `Cargo.toml`، كالمعتاد (أو اطلبه من Claude):
-   ```bash
-   git tag -a v2.3.0 -m "ملاحظات الإصدار بصيغة Markdown..."
-   git push origin v2.3.0
-   ```
-2. يبني GitHub البرنامج، ثم يتوقف وينتظر موافقتك. يصلك إشعار **Review deployments**، على الجوال أيضًا.
-3. افتح التشغيل وتأكد أنه للوسم الذي أنشأته أنت للتو، ثم اضغط **Approve and deploy**. **لا توافق أبدًا على تشغيل لم تبدأه.**
-4. بعد ذلك يجري كل شيء تلقائيًا: التوقيع بـ `local-ai-chat vX.Y.Z`، ثم التحقق منه، وشهادة البناء (attestation)، وإنشاء الإصدار كمسودة، والتأكد من وجود الملفات الثلاثة (`local-ai-chat.exe` و`local-ai-chat.exe.sha256` و`local-ai-chat.exe.minisig`)، ثم النشر.
+لا حاجة لدفع أي وسم (tag). الإصدار يحدث حين يُدمج في `main` طلب دمج (Pull Request) يرفع `version` في `Cargo.toml`، وذلك في قطار الجمعة فقط.
+
+1. يجهّز Claude طلب دمج يرفع `version` في `Cargo.toml` (مثلًا `2.3.0`) ويضيف قسم `## [2.3.0]` في `CHANGELOG.md`. هذا القسم يصبح نص الإصدار؛ إن غاب يكتب GitHub الملاحظات تلقائيًا من طلبات الدمج.
+2. راجع الطلب وادمجه (من المتصفح أو تطبيق GitHub على الجوال).
+3. يرى GitHub أن الوسم `v2.3.0` غير موجود، فيبني البرنامج ثم يتوقف وينتظر موافقتك. يصلك إشعار **Review deployments**، على الجوال أيضًا.
+4. افتح التشغيل وتأكد أنه لدمج قمت به أنت للتو وللرقم الذي تتوقعه، ثم اضغط **Approve and deploy**. **لا توافق أبدًا على تشغيل لم تبدأه.**
+5. بعد ذلك يجري كل شيء تلقائيًا: التوقيع بـ `local-ai-chat v2.3.0`، ثم التحقق منه، وشهادة البناء (attestation)، وإنشاء الإصدار كمسودة، والتأكد من وجود الملفات الثلاثة (`local-ai-chat.exe` و`local-ai-chat.exe.sha256` و`local-ai-chat.exe.minisig`)، ثم النشر. عند النشر يُنشئ GitHub الوسم `v2.3.0` على commit الدمج نفسه.
+
+ملاحظات:
+- أي دمج في `main` لا يغيّر الرقم لا يفعل شيئًا سوى فحص سريع للرقم (ثوانٍ)، ولا يطلب موافقتك.
+- إن رفضت الموافقة أو فشل التشغيل فلن يُنشر شيء، وسيطلب الدمج التالي في `main` موافقتك من جديد ما دام الرقم بلا إصدار. لإعادة المحاولة فورًا: افتح التشغيل واضغط **Re-run failed jobs**.
+- ما زال دفع وسم `vX.Y.Z` يدويًا يعمل كما كان، لكنه لم يعد ضروريًا.
 
 تجربة بلا نشر: **Actions → Release → Run workflow**. توقّع بمفتاح مؤقت وتتحقق، ولا تنشئ أي إصدار.
 
