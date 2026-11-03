@@ -3,6 +3,7 @@
 pub const WINDOW_TITLE: &str = "Lemon";
 /// Window title of versions before the rename (<= 2.1.1), still matched when
 /// focusing an already running instance.
+#[cfg(windows)]
 const LEGACY_TITLE: &str = "الذكاء المحلي";
 
 /// Holds the named mutex for the lifetime of the app.
