@@ -33,7 +33,10 @@ async fn open(State(s): State<AppState>) -> Json<Value> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        cmd.raw_arg(format!("/select,\"{}\"", crash_log::crash_file(&s.paths.data_dir).display()));
+        cmd.raw_arg(format!(
+            "/select,\"{}\"",
+            crash_log::crash_file(&s.paths.data_dir).display()
+        ));
     }
     #[cfg(not(windows))]
     cmd.arg(&s.paths.data_dir);

@@ -65,10 +65,16 @@ fn install_at(path: PathBuf) {
 
 fn record(path: &Path, info: &PanicHookInfo<'_>) {
     let thread = std::thread::current();
-    let name = thread.name().map_or_else(|| format!("{:?}", thread.id()), str::to_string);
-    let location = info.location().map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()));
+    let name = thread
+        .name()
+        .map_or_else(|| format!("{:?}", thread.id()), str::to_string);
+    let location = info
+        .location()
+        .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()));
     let backtrace = std::backtrace::Backtrace::force_capture().to_string();
-    let secs = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
     let message = info.payload_as_str().unwrap_or("(no message)");
     let text = entry(secs, &name, message, location.as_deref(), &backtrace);
     append(path, &text, MAX_BYTES);
@@ -76,8 +82,18 @@ fn record(path: &Path, info: &PanicHookInfo<'_>) {
 
 /// One entry. Every line but the first is indented, so only real entry starts
 /// begin with [`ENTRY_START`].
-fn entry(secs: u64, thread: &str, message: &str, location: Option<&str>, backtrace: &str) -> String {
-    let mut s = format!("{ENTRY_START}{} v{} ===\n", utc(secs), env!("CARGO_PKG_VERSION"));
+fn entry(
+    secs: u64,
+    thread: &str,
+    message: &str,
+    location: Option<&str>,
+    backtrace: &str,
+) -> String {
+    let mut s = format!(
+        "{ENTRY_START}{} v{} ===\n",
+        utc(secs),
+        env!("CARGO_PKG_VERSION")
+    );
     let _ = writeln!(s, "  thread: {thread}");
     let mut lines = message.lines();
     let _ = writeln!(s, "  message: {}", lines.next().unwrap_or(""));
@@ -141,7 +157,9 @@ fn append(path: &Path, entry: &str, max: usize) {
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let old = std::fs::read(path).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
+    let old = std::fs::read(path)
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .unwrap_or_default();
     let _ = crate::config::write_atomic(path, capped(&old, entry, max).as_bytes());
 }
 
@@ -151,7 +169,10 @@ fn modified(path: &Path) -> Option<SystemTime> {
 
 /// `crash.txt` changed since the UI last showed the notice ([`mark_seen`]).
 pub fn unseen(data_dir: &Path) -> bool {
-    match (modified(&crash_file(data_dir)), modified(&data_dir.join(SEEN_FILE))) {
+    match (
+        modified(&crash_file(data_dir)),
+        modified(&data_dir.join(SEEN_FILE)),
+    ) {
         (Some(crash), Some(seen)) => crash > seen,
         (Some(_), None) => true,
         _ => false,
@@ -160,7 +181,12 @@ pub fn unseen(data_dir: &Path) -> bool {
 
 /// Records that the notice for the current `crash.txt` was shown.
 pub fn mark_seen(data_dir: &Path) -> std::io::Result<()> {
-    std::fs::write(data_dir.join(SEEN_FILE), utc(SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())))
+    std::fs::write(
+        data_dir.join(SEEN_FILE),
+        utc(SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs())),
+    )
 }
 
 #[cfg(test)]
@@ -183,10 +209,27 @@ mod tests {
 
     #[test]
     fn entry_has_every_field() {
-        let e = entry(0, "worker", "boom\n=== Lemon crash fake", Some("src/x.rs:3:9"), "   0: main\n   1: start");
-        assert!(e.starts_with(&format!("=== Lemon crash 1970-01-01 00:00:00 UTC v{} ===\n", env!("CARGO_PKG_VERSION"))));
-        assert!(e.contains("\n  thread: worker\n  message: boom\n    === Lemon crash fake\n"), "{e}");
-        assert!(e.contains("\n  location: src/x.rs:3:9\n  backtrace:\n       0: main\n       1: start\n"), "{e}");
+        let e = entry(
+            0,
+            "worker",
+            "boom\n=== Lemon crash fake",
+            Some("src/x.rs:3:9"),
+            "   0: main\n   1: start",
+        );
+        assert!(e.starts_with(&format!(
+            "=== Lemon crash 1970-01-01 00:00:00 UTC v{} ===\n",
+            env!("CARGO_PKG_VERSION")
+        )));
+        assert!(
+            e.contains("\n  thread: worker\n  message: boom\n    === Lemon crash fake\n"),
+            "{e}"
+        );
+        assert!(
+            e.contains(
+                "\n  location: src/x.rs:3:9\n  backtrace:\n       0: main\n       1: start\n"
+            ),
+            "{e}"
+        );
         assert_eq!(e.matches("\n=== Lemon crash").count(), 0);
         assert!(entry(0, "t", "", None, "").contains("location: unknown"));
     }
@@ -207,7 +250,9 @@ mod tests {
         assert_eq!(capped(&"?".repeat(3000), &newest, 2000), newest);
         let huge = entry(3, "c", &"ب".repeat(5000), None, "");
         let cut = capped("", &huge, 2001);
-        assert!(cut.starts_with(ENTRY_START) && cut.ends_with("[truncated]\n\n") && cut.len() < 2100);
+        assert!(
+            cut.starts_with(ENTRY_START) && cut.ends_with("[truncated]\n\n") && cut.len() < 2100
+        );
     }
 
     #[test]
@@ -240,7 +285,11 @@ mod tests {
         }
         let dir = temp_dir("hook");
         let out = std::process::Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "crash_log::tests::hook_writes_crash_txt_in_data_dir", "--nocapture"])
+            .args([
+                "--exact",
+                "crash_log::tests::hook_writes_crash_txt_in_data_dir",
+                "--nocapture",
+            ])
             .env(CHILD, "1")
             .env(crate::config::DATA_DIR_ENV, &dir)
             .output()
@@ -251,9 +300,18 @@ mod tests {
         assert!(stderr.contains("probe panic 42"), "{stderr}");
         let text = std::fs::read_to_string(dir.join("crash.txt")).unwrap();
         assert!(text.starts_with(ENTRY_START), "{text}");
-        assert!(text.contains(&format!(" v{} ===", env!("CARGO_PKG_VERSION"))), "{text}");
-        assert!(text.contains("  thread: probe-thread\n  message: probe panic 42\n"), "{text}");
-        assert!(text.contains("  location: src") && text.contains("crash_log.rs:"), "{text}");
+        assert!(
+            text.contains(&format!(" v{} ===", env!("CARGO_PKG_VERSION"))),
+            "{text}"
+        );
+        assert!(
+            text.contains("  thread: probe-thread\n  message: probe panic 42\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("  location: src") && text.contains("crash_log.rs:"),
+            "{text}"
+        );
         assert!(text.contains("  backtrace:\n    "), "{text}");
         assert!(unseen(&dir));
         let _ = std::fs::remove_dir_all(&dir);
