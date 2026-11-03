@@ -10,6 +10,10 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 ### English
 - 🧯 **Crash log:** panics are recorded to `crash.txt` in the data folder; the next start shows a one-line notice with an "Open folder" button.
 
+### Security
+- الخادم المحلي يرفض الطلبات القادمة من مواقع أخرى عبر ترويسة `Sec-Fetch-Site` (مثل `<img>` أو `<script>` من صفحة ويب)، ويضيف `Cross-Origin-Resource-Policy: same-origin` و`X-Content-Type-Options: nosniff` لكل الردود.
+- The local server now rejects cross-site browser requests via `Sec-Fetch-Site` (e.g. an `<img>`/`<script>` GET from a web page, which carries no `Origin`), and adds `Cross-Origin-Resource-Policy: same-origin` and `X-Content-Type-Options: nosniff` to every response.
+
 ## [2.2.0] — 2026-10-30
 
 ### العربية
