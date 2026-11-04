@@ -183,7 +183,9 @@ Contributions, bug reports and translations are welcome. Please read
 
 ## License
 
-[MIT](LICENSE) © 2026 Sarmad.
+[MIT](LICENSE) © 2026 FastKiwi (Sarmad).
+
+The Lemon name and icon are trademarks of FastKiwi (Sarmad) and are not covered by the MIT License: see [TRADEMARKS.md](TRADEMARKS.md).
 
 Third-party components and their licenses are listed in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Ollama and AI models are not
