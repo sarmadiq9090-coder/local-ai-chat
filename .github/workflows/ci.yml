@@ -77,6 +77,19 @@ jobs:
       - name: Audit .github/workflows
         run: pipx run --spec zizmor==1.32.0 zizmor --offline --min-severity low .github/workflows
 
+  i18n:
+    name: ar/en string parity (ui/**/strings.js)
+    # tests/i18n_parity.rs: same keys in ar and en, no empty values, same {placeholders}.
+    # Also part of `cargo test` in the build job; this job reports it on its own.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo test --locked --test i18n_parity
+
   build:
     name: test + release build
     runs-on: windows-latest
