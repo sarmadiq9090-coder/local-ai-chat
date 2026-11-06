@@ -6,6 +6,11 @@ for convenience; the authoritative license text of each Rust crate ships with
 the crate source (see `cargo metadata` or the crate's page on
 [crates.io](https://crates.io)).
 
+The complete list, with every licence text, is
+[`THIRD-PARTY-NOTICES.txt`](THIRD-PARTY-NOTICES.txt), generated from `Cargo.lock` by
+`python3 tools/make_notices.py` (CI checks it is current). The app shows it in
+Settings → Support → Open-source licences, so every release ships it.
+
 ## 1. Bundled web assets
 
 These files are embedded into the executable as-is.

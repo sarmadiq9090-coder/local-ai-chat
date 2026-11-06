@@ -11,8 +11,15 @@ pub fn router() -> Router<AppState> {
     Router::new().route("/settings", get(get_settings).put(put_settings))
 }
 
-async fn get_settings(State(s): State<AppState>) -> Json<Settings> {
-    Json(s.settings.read().await.clone())
+/// The settings, plus `"language_unsaved": true` while no language is stored yet
+/// (first run: `language` is the Windows display language).
+async fn get_settings(State(s): State<AppState>) -> ApiResult<Json<Value>> {
+    let current = s.settings.read().await.clone();
+    let mut body = serde_json::to_value(&current)?;
+    if current.language_unsaved {
+        body["language_unsaved"] = Value::Bool(true);
+    }
+    Ok(Json(body))
 }
 
 /// Accepts a full or partial settings object: given fields replace the current

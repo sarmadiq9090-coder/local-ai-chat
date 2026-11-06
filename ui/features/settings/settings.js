@@ -1,6 +1,6 @@
-// settings.js — app settings: load/save via /api/app/settings, theme and UI
-// language application, and the settings modal (language, system prompt,
-// temperature, context length, theme, Ollama URL). Emits "settings" after every change and "ollama-url-changed"
+// settings.js — app settings: load/save via /api/app/settings, theme, UI
+// language and digit application, and the settings modal (language, digits in the
+// Arabic UI, system prompt, temperature, context length, theme, Ollama URL). Emits "settings" after every change and "ollama-url-changed"
 // when the Ollama address is edited. Owns the sidebar "settings" button.
 // Other features wait for `settingsLoaded` before using state.settings at startup.
 // "settings-open" payload: { form, draft, contribute(fn) } — a feature may append a section to
@@ -11,7 +11,7 @@
 import { state, emit } from "../../core/state.js";
 import * as api from "../../core/api.js";
 import { $, el, openModal, toast } from "../../core/dom.js";
-import { t, registerStrings, setLanguage, getLanguage } from "../../core/i18n.js";
+import { t, registerStrings, setLanguage, getLanguage, previousLanguage, formatNumber } from "../../core/i18n.js";
 import strings from "./strings.js";
 
 registerStrings("settings", strings);
@@ -30,15 +30,18 @@ export function promptForLanguage(prompt, lang) {
 
 const LANGUAGES = [["ar", "العربية"], ["en", "English"]]; // endonyms: readable in either UI language
 
+// Only used when the backend can't be read: the language guessed at startup (core/i18n.js)
+// instead of forcing Arabic. The backend's own first-run default follows Windows (config.rs).
 export const DEFAULT_SETTINGS = {
   ollama_url: "http://127.0.0.1:11434",
-  system_prompt: DEFAULT_PROMPTS.ar,
+  system_prompt: DEFAULT_PROMPTS[getLanguage()] ?? DEFAULT_PROMPTS.ar,
   temperature: 0.7,
   num_ctx: 8192,
   theme: "dark",
   default_model: null,
   think: false,
-  language: "ar",
+  language: getLanguage(),
+  digits: "latn", // Arabic UI: "latn" 123 (owner default) or "arab" ١٢٣
   auto_update: true,
 };
 
@@ -82,10 +85,20 @@ async function fetchSettings() {
 export async function loadSettings() {
   let s = {};
   try { s = await fetchSettings(); } catch (e) { loadedFromServer = false; console.warn("settings load failed", e); }
-  state.settings = { ...DEFAULT_SETTINGS, ...s };
+  const { language_unsaved: languageUnsaved, ...saved } = s;
+  state.settings = { ...DEFAULT_SETTINGS, ...saved };
+  // No language saved yet, so the backend proposes the Windows display language. Someone
+  // who already used the app (an earlier run stored its language) keeps that language:
+  // only a real first run follows Windows. Saving makes it the user's saved choice.
+  const before = languageUnsaved ? previousLanguage() : null;
+  if (before && before !== state.settings.language) {
+    try {
+      await saveSettings({ language: before, system_prompt: promptForLanguage(state.settings.system_prompt, before) });
+    } catch { /* toast shown by saveSettings; the backend's language stays for this run */ }
+  }
   applyTheme(state.settings.theme);
   if (loadedFromServer) rememberTheme(state.settings.theme);
-  setLanguage(state.settings.language);
+  setLanguage(state.settings.language, state.settings.digits);
   emit("settings");
   markLoaded();
   return state.settings;
@@ -120,7 +133,7 @@ export async function saveSettings(patch) {
   } finally {
     if (!previewing) {
       applyTheme(state.settings.theme);
-      setLanguage(state.settings.language);
+      setLanguage(state.settings.language, state.settings.digits);
     }
     emit("settings");
   }
@@ -146,13 +159,14 @@ export function openSettings(draft) {
   const prompt = el("textarea", { rows: 6, dir: "auto", class: "input" });
   prompt.value = s.system_prompt || "";
 
-  const tempOut = el("output", { class: "range-val", dir: "ltr" }, Number(s.temperature).toFixed(1));
+  const oneDecimal = x => formatNumber(Number(x), { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const tempOut = el("output", { class: "range-val", dir: "ltr" }, oneDecimal(s.temperature));
   const temp = el("input", { type: "range", min: "0", max: "2", step: "0.1", class: "range" });
   temp.value = String(s.temperature);
-  temp.addEventListener("input", () => { tempOut.textContent = Number(temp.value).toFixed(1); });
+  temp.addEventListener("input", () => { tempOut.textContent = oneDecimal(temp.value); });
 
   const ctx = el("select", { class: "input", dir: "ltr" },
-    CTX_OPTIONS.map(n => el("option", { value: String(n) }, n.toLocaleString("en-US"))));
+    CTX_OPTIONS.map(n => el("option", { value: String(n) }, formatNumber(n))));
   ctx.value = String(CTX_OPTIONS.includes(Number(s.num_ctx)) ? s.num_ctx : 8192);
 
   const theme = el("select", { class: "input" },
@@ -168,6 +182,11 @@ export function openSettings(draft) {
   const language = el("select", { class: "input" },
     LANGUAGES.map(([code, name]) => el("option", { value: code, lang: code, dir: code === "ar" ? "rtl" : "ltr" }, name)));
   language.value = getLanguage();
+  // Digits only matter in the Arabic UI; the English dialog keeps the saved value.
+  const digits = el("select", { class: "input" },
+    el("option", { value: "latn" }, t("digitsWestern")),
+    el("option", { value: "arab" }, t("digitsArabic")));
+  digits.value = s.digits === "arab" ? "arab" : "latn";
   // Sections added by other features (see "settings-open"): each returns a partial patch.
   const contributors = [];
   const contributed = () => Object.assign({}, ...contributors.map(fn => { try { return fn() || {}; } catch { return {}; } }));
@@ -183,6 +202,7 @@ export function openSettings(draft) {
       num_ctx: Number(ctx.value),
       theme: theme.value,
       ollama_url: url.value,
+      digits: digits.value,
     };
     rebuilding = true;
     m.close(true);
@@ -206,12 +226,13 @@ export function openSettings(draft) {
         num_ctx: Number(ctx.value),
         theme: theme.value,
         language: language.value,
+        digits: digits.value,
         ollama_url: url.value.trim() || DEFAULT_SETTINGS.ollama_url,
       });
       saved = true;
       previewing = false;
       applyTheme(state.settings.theme);
-      setLanguage(state.settings.language);
+      setLanguage(state.settings.language, state.settings.digits);
       toast(t("saved"), "success");
       m.close(true);
       if (state.settings.ollama_url !== oldUrl) emit("ollama-url-changed");
@@ -225,6 +246,7 @@ export function openSettings(draft) {
     className: "settings",
     body: el("div", { class: "form" },
       field(t("language"), language),
+      getLanguage() === "ar" ? field(t("digits"), digits) : null,
       field(t("systemPrompt"), prompt),
       field(t("temperature"), el("div", { class: "range-row" }, temp, tempOut)),
       el("div", { class: "field-row" },

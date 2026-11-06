@@ -17,7 +17,7 @@ import * as api from "../../core/api.js";
 import { $, el, iconButton, openModal, confirmDialog, toast, setStatus } from "../../core/dom.js";
 import { saveSettings } from "../settings/settings.js";
 import { icon } from "../../core/icons.js";
-import { t, registerStrings } from "../../core/i18n.js";
+import { t, registerStrings, localizeDigits } from "../../core/i18n.js";
 import { CATALOG, CATEGORIES, LEVELS, rateModel, discreteGpus, describe } from "./catalog.js";
 import strings from "./strings.js";
 
@@ -26,11 +26,11 @@ registerStrings("models", strings);
 /** Bytes → "4.7" (GB, one decimal). Pure. */
 export const toGB = bytes => (Number(bytes || 0) / 1024 ** 3).toFixed(1);
 
-/** Bytes → "4.7 GB", or "45 MB" below 0.1 GB (so small models don't show "0.0 GB"). Pure. */
+/** Bytes → "4.7 GB", or "45 MB" below 0.1 GB (so small models don't show "0.0 GB"), in the UI digits. */
 export function fmtSize(bytes) {
   const n = Number(bytes || 0);
-  if (n >= 0.1 * 1024 ** 3) return `${toGB(n)} GB`;
-  return `${Math.max(n > 0 ? 1 : 0, Math.round(n / 1024 ** 2))} MB`;
+  if (n >= 0.1 * 1024 ** 3) return localizeDigits(`${toGB(n)} GB`);
+  return localizeDigits(`${Math.max(n > 0 ? 1 : 0, Math.round(n / 1024 ** 2))} MB`);
 }
 
 const EMBED_NAME = /embed|bge|minilm|nomic|e5-/i; // same heuristic as features/assistants
@@ -266,7 +266,7 @@ export function openModelManager() {
           const done = p.completed || 0;
           const pct = Math.min(100, (done / p.total) * 100);
           bar.style.width = pct.toFixed(1) + "%";
-          text += ` — \u2066${fmtSize(done)} / ${fmtSize(p.total)} (${pct.toFixed(0)}%)\u2069`;
+          text += ` — \u2066${fmtSize(done)} / ${fmtSize(p.total)} (${localizeDigits(pct.toFixed(0))}%)\u2069`;
         }
         pullStatus.textContent = text;
       }
@@ -347,7 +347,7 @@ export function pullErrorText(message) {
 // ---------- download suggestions ----------
 let systemInfo = null; // GET /api/app/system, cached after the first success
 
-const fmtGb = x => String(Math.round(x * 10) / 10);
+const fmtGb = x => localizeDigits(Math.round(x * 10) / 10);
 const levelRank = r => (r ? LEVELS.indexOf(r.level) : 0);
 
 /**

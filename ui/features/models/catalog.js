@@ -4,7 +4,7 @@
 // arabic (good | ok | weak), desc ({ ar, en }: what it's good at; read it via describe()).
 // rateModel(model, system) rates a model against GET /api/app/system.
 
-import { t, getLanguage } from "../../core/i18n.js";
+import { t, getLanguage, localizeDigits } from "../../core/i18n.js";
 
 export const CATEGORIES = ["chat", "code", "reasoning", "vision"];
 export const LEVELS = ["best", "good", "slow", "no"];
@@ -168,5 +168,5 @@ export function rateModel(model, system) {
 
 /** 8 → "8", 63.8 → "64", 9.3 → "9.3" (GB, for messages). */
 function fmtGb(x) {
-  return x >= 20 ? String(Math.round(x)) : String(Math.round(x * 10) / 10);
+  return localizeDigits(x >= 20 ? Math.round(x) : Math.round(x * 10) / 10);
 }

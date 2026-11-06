@@ -1,0 +1,43 @@
+# cargo-deny: licence, ban, source and advisory gate (CI job "cargo-deny").
+#   cargo deny check
+# Only what ships in local-ai-chat.exe counts: Windows MSVC targets (so Android,
+# wasm, Linux and macOS-only crates are left out) and no dev-dependencies.
+[graph]
+targets = ["x86_64-pc-windows-msvc", "i686-pc-windows-msvc", "aarch64-pc-windows-msvc"]
+exclude-dev = true
+
+[licenses]
+# Owner allowlist (same as InstaConvert's deny.toml): Apache, MIT, BSD, ISC and
+# Zlib for code; Unicode-3.0 for data (Unicode tables). Adding a licence or an
+# exception needs the owner's approval. tools/make_notices.py has the same rule.
+allow = [
+  "MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", "BSD-3-Clause",
+  "ISC", "Zlib", "Unicode-3.0",
+]
+confidence-threshold = 0.9
+# The allowlist is shared across the FastKiwi repos; not every entry is used here.
+unused-allowed-license = "allow"
+exceptions = [
+  # APPROVED by the owner on 2026-11-06 for option-ext ONLY: MPL-2.0, used unmodified
+  # (a helper of `dirs`); source attribution in THIRD_PARTY_NOTICES.md.
+  { allow = ["MPL-2.0"], crate = "option-ext" },
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+# TLS is rustls only (reqwest "rustls" feature).
+deny = [{ name = "openssl" }, { name = "openssl-sys" }, { name = "native-tls" }]
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = [
+  # Unmaintained, not a vulnerability; no maintained release exists. Pulled in by
+  # pdf-extract -> lopdf (font parsing for PDF text). Revisit when lopdf moves off it.
+  { id = "RUSTSEC-2026-0192", reason = "ttf-parser unmaintained; transitive via pdf-extract/lopdf, no upgrade available" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
