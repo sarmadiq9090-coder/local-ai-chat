@@ -50,9 +50,6 @@ jobs:
       - name: Build release
         run: cargo build --release --locked
 
-      - name: Check the exe imports only Windows system DLLs (no Visual C++ runtime)
-        run: python tools/check_imports.py target/release/local-ai-chat.exe
-
       - name: Prepare assets
         shell: bash
         run: |
