@@ -1,6 +1,7 @@
 //! Auto-update: check GitHub for a newer release and install it. See `docs/API.md`
 //! and `src/update.rs`. Network problems never produce a 5xx: `check` returns
-//! `available: false` + `error`, `install` streams `{"error": ...}`.
+//! `available: false` + `error`, `install` streams `{"error": ...}` (plus
+//! `"code": "signature"` when the update's minisign signature is missing or invalid).
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -160,7 +161,12 @@ async fn install() -> Response {
                     update::request_exit();
                 }
                 Err(e) => {
-                    let _ = tx.send(line(json!({ "error": format!("{e:#}") })));
+                    let mut msg = json!({ "error": format!("{e:#}") });
+                    if update::is_signature_error(&e) {
+                        // The UI shows its own localized "couldn't be verified" message.
+                        msg["code"] = json!("signature");
+                    }
+                    let _ = tx.send(line(msg));
                     INSTALLING.store(false, Ordering::SeqCst);
                 }
             }

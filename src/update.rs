@@ -3,7 +3,9 @@
 //! - `fetch_latest()` asks GitHub for the latest release of [`REPO`] (`Ok(None)`
 //!   when there is no release / no repo); `is_newer()` compares it to this build.
 //! - `install()` downloads the `local-ai-chat.exe` asset, verifies it against the
-//!   `local-ai-chat.exe.sha256` asset, swaps it in place of the running exe
+//!   `local-ai-chat.exe.sha256` asset and — once [`TRUSTED_PUBLIC_KEYS`] is not
+//!   empty — against the minisign signature `local-ai-chat.exe.minisig`
+//!   (spec: `docs/specs/signing.md`), swaps it in place of the running exe
 //!   (running exe → `local-ai-chat.old.exe`), and spawns it with `--after-update`.
 //! - `after_update()` (called from `main` on `--after-update`) deletes the old exe
 //!   and remembers the new version so the UI can show a "updated" toast once.
@@ -11,7 +13,8 @@
 //!   `--serve` mode the process just exits).
 //!
 //! Dev override: if `LOCALAI_UPDATE_FEED=<url>` is set, that URL is used instead of
-//! the GitHub API (it must return JSON shaped like a GitHub release).
+//! the GitHub API (it must return JSON shaped like a GitHub release). The
+//! signature rules are exactly the same with or without the override.
 
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
@@ -29,6 +32,9 @@ pub const REPO: &str = "sarmadiq9090-coder/local-ai-chat";
 pub const ASSET_NAME: &str = "local-ai-chat.exe";
 /// Release asset with `<sha256 hex>  local-ai-chat.exe`.
 pub const SHA_ASSET_NAME: &str = "local-ai-chat.exe.sha256";
+/// Release asset with the minisign signature of [`ASSET_NAME`] (made in CI by the
+/// `sign` job of `.github/workflows/release.yml`).
+pub const SIG_ASSET_NAME: &str = "local-ai-chat.exe.minisig";
 /// The previous exe is renamed to this (next to the running exe) during the swap.
 pub const OLD_EXE_NAME: &str = "local-ai-chat.old.exe";
 /// The new exe is written here first, then renamed into place.
@@ -41,6 +47,63 @@ const FEED_ENV: &str = "LOCALAI_UPDATE_FEED";
 pub const MAX_EXE_BYTES: u64 = 200 * 1024 * 1024;
 /// Largest `.sha256` file we are willing to download (1 KB).
 pub const MAX_SHA_BYTES: u64 = 1024;
+/// Largest `.minisig` file we are willing to download (4 KB; a real one is ~350 bytes).
+pub const MAX_SIG_BYTES: u64 = 4096;
+
+// ---------------------------------------------------------------- signing keys
+
+// TODO(owner): paste minisign public keys here.
+//
+// Each entry is the SECOND line of a `minisign.pub` file (the base64 key that
+// starts with `RW`), NOT the "untrusted comment" line and never a secret key.
+// Put the primary key first and the offline backup key second, e.g.
+//
+//     pub const TRUSTED_PUBLIC_KEYS: &[&str] = &[
+//         "RWQ...primary...", // primary: keys/minisign-primary.pub (signs releases in CI)
+//         "RWQ...backup...",  // backup: keys/minisign-backup.pub (secret kept offline)
+//     ];
+//
+// How the keys are made and where the secrets live: docs/specs/signing.md.
+// Commit keys/minisign-{primary,backup}.pub in the SAME change: the release
+// workflow signs only when they exist (test `keys_dir_matches_trusted_keys`).
+//
+// While this list is EMPTY, updates are verified with the sha256 file only (as
+// in 2.2.0 and earlier) and a log line says signature checking is not
+// configured. As soon as it holds at least one key, every update MUST carry a
+// valid `local-ai-chat.exe.minisig` made by one of these keys, or it is refused.
+// This is decided at compile time only: there is no runtime or server switch.
+/// Production minisign public keys trusted to sign updates (see the comment above).
+#[cfg_attr(feature = "dev-test-update-key", allow(dead_code))]
+pub const TRUSTED_PUBLIC_KEYS: &[&str] = &[];
+
+/// TEST-ONLY key pair (public on purpose, protects nothing); see
+/// `tests/fixtures/update-signing/regen.sh`.
+#[cfg(any(test, feature = "dev-test-update-key"))]
+const TEST_PRIMARY_PUB: &str = include_str!("../tests/fixtures/update-signing/test-primary.pub");
+
+#[cfg(all(feature = "dev-test-update-key", not(debug_assertions)))]
+compile_error!(
+    "the `dev-test-update-key` feature trusts a public TEST key; it is for local debug builds only"
+);
+
+/// The base64 key line of a `minisign.pub` file (its second line).
+#[cfg(any(test, feature = "dev-test-update-key"))]
+fn pub_key_line(pub_file: &str) -> &str {
+    pub_file.lines().nth(1).unwrap_or_default().trim()
+}
+
+/// The keys this build trusts: [`TRUSTED_PUBLIC_KEYS`], or — only in a debug build
+/// with the `dev-test-update-key` feature — the TEST key instead.
+pub fn trusted_keys() -> Vec<&'static str> {
+    #[cfg(feature = "dev-test-update-key")]
+    {
+        vec![pub_key_line(TEST_PRIMARY_PUB)]
+    }
+    #[cfg(not(feature = "dev-test-update-key"))]
+    {
+        TRUSTED_PUBLIC_KEYS.to_vec()
+    }
+}
 
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -139,6 +202,10 @@ pub struct ReleaseInfo {
     pub published_at: Option<String>,
     pub asset_url: String,
     pub sha_url: String,
+    /// `local-ai-chat.exe.minisig`, if the release has one. Optional here so the
+    /// check still reports the new version; [`install`] refuses an update without
+    /// it once [`TRUSTED_PUBLIC_KEYS`] is not empty.
+    pub sig_url: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -178,6 +245,7 @@ pub fn parse_release(json: &[u8]) -> anyhow::Result<ReleaseInfo> {
         url_of(ASSET_NAME).with_context(|| format!("release has no {ASSET_NAME} asset"))?;
     let sha_url =
         url_of(SHA_ASSET_NAME).with_context(|| format!("release has no {SHA_ASSET_NAME} asset"))?;
+    let sig_url = url_of(SIG_ASSET_NAME);
     let mut version = format!("{}.{}.{}", v.major, v.minor, v.patch);
     if !v.pre.is_empty() {
         version = format!("{version}-{}", v.pre.join("."));
@@ -188,6 +256,7 @@ pub fn parse_release(json: &[u8]) -> anyhow::Result<ReleaseInfo> {
         published_at: r.published_at,
         asset_url,
         sha_url,
+        sig_url,
     })
 }
 
@@ -308,6 +377,102 @@ pub fn verify_sha256(data: &[u8], expected: &[u8; 32]) -> anyhow::Result<()> {
     Ok(())
 }
 
+// ---------------------------------------------------------------- signature
+
+/// The update could not be proven to come from the owner's signing key
+/// (signature missing, unreadable, made by another key, or for another
+/// version). The UI shows a dedicated message for it (`code: "signature"`).
+#[derive(Debug)]
+pub struct SignatureError(pub String);
+
+impl std::fmt::Display for SignatureError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "the update could not be verified ({}); it was not installed and the current \
+             version was kept. Download it manually from https://github.com/{REPO}/releases \
+             or https://fastkiwi.app/",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for SignatureError {}
+
+/// True if `e` (or anything in its chain) is a [`SignatureError`].
+pub fn is_signature_error(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| c.is::<SignatureError>())
+}
+
+fn sig_error(why: impl Into<String>) -> anyhow::Error {
+    anyhow::Error::new(SignatureError(why.into()))
+}
+
+/// The trusted comment a release signature must carry, e.g. `local-ai-chat v2.3.0`
+/// (`version` as in [`ReleaseInfo::version`]; the release tag is `v<version>`).
+/// Binding the version stops an older signed exe from being replayed as a newer release.
+pub fn expected_trusted_comment(version: &str) -> String {
+    format!("local-ai-chat v{version}")
+}
+
+/// Verify `data` against the minisign signature file `sig_text`: it must be a
+/// (pre-hashed) signature by one of `keys` (base64 public keys) whose trusted
+/// comment is exactly [`expected_trusted_comment`]`(version)`. Errors are
+/// [`SignatureError`]s. An empty `keys` list never verifies.
+pub fn verify_signature(
+    data: &[u8],
+    sig_text: &str,
+    version: &str,
+    keys: &[&str],
+) -> anyhow::Result<()> {
+    let sig = minisign_verify::Signature::decode(sig_text.trim_start_matches('\u{feff}'))
+        .map_err(|e| sig_error(format!("the signature file is not valid: {e}")))?;
+    for key in keys {
+        let Ok(pk) = minisign_verify::PublicKey::from_base64(key.trim()) else {
+            continue; // a malformed compiled-in key is caught by a unit test
+        };
+        // `false`: legacy (non-pre-hashed) signatures are not accepted.
+        if pk.verify(data, &sig, false).is_ok() {
+            let expected = expected_trusted_comment(version);
+            if sig.trusted_comment() != expected {
+                return Err(sig_error(format!(
+                    "the signature is for {:?}, not {expected:?}",
+                    sig.trusted_comment()
+                )));
+            }
+            return Ok(());
+        }
+    }
+    Err(sig_error("the signature does not match a trusted key"))
+}
+
+/// Download the release's `.minisig` and verify `data` with it (see [`verify_signature`]).
+async fn check_release_signature(
+    release: &ReleaseInfo,
+    data: &[u8],
+    keys: &[&str],
+    allow_local_http: bool,
+) -> anyhow::Result<()> {
+    let sig_url = release
+        .sig_url
+        .as_deref()
+        .ok_or_else(|| sig_error(format!("the release has no {SIG_ASSET_NAME}")))?;
+    check_download_url(sig_url, allow_local_http)?;
+    let resp = http()
+        .get(sig_url)
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| sig_error(format!("could not download the signature: {e}")))?;
+    let sig_bytes = read_capped(resp, MAX_SIG_BYTES, "signature file", |_, _| {})
+        .await
+        .map_err(|e| sig_error(format!("could not download the signature: {e:#}")))?;
+    let sig_text = std::str::from_utf8(&sig_bytes)
+        .map_err(|_| sig_error("the signature file is not valid"))?;
+    verify_signature(data, sig_text, &release.version, keys)
+}
+
 // ---------------------------------------------------------------- install
 
 /// Progress reported by [`install`].
@@ -320,13 +485,14 @@ pub enum Progress {
 
 /// Download, verify, swap and relaunch. On success the new exe is running (or
 /// starting) and the caller should report "restarting" and call [`request_exit`].
-/// On error (insecure URL, oversize, checksum mismatch, I/O) the current exe is
-/// left in place.
+/// On error (insecure URL, oversize, checksum mismatch, missing/bad signature,
+/// I/O) the current exe is left in place.
 pub async fn install(
     release: &ReleaseInfo,
     mut progress: impl FnMut(Progress),
 ) -> anyhow::Result<()> {
-    let data = download_verified(release, dev_feed_active(), &mut progress).await?;
+    let keys = trusted_keys();
+    let data = download_verified(release, &keys, dev_feed_active(), &mut progress).await?;
 
     tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
         let exe = std::env::current_exe().context("cannot locate the running exe")?;
@@ -345,9 +511,11 @@ pub async fn install(
 }
 
 /// Download the checksum and the exe (size-capped, URL-checked) and verify
-/// them. Nothing touches the disk here.
+/// them; then, unless `keys` is empty, download and verify the signature.
+/// Nothing touches the disk here.
 async fn download_verified(
     release: &ReleaseInfo,
+    keys: &[&str],
     allow_local_http: bool,
     progress: &mut impl FnMut(Progress),
 ) -> anyhow::Result<Vec<u8>> {
@@ -383,6 +551,14 @@ async fn download_verified(
 
     progress(Progress::Verifying);
     verify_sha256(&data, &expected)?;
+    if keys.is_empty() {
+        eprintln!(
+            "update: signature checking is not configured (update::TRUSTED_PUBLIC_KEYS is empty); \
+             verified the sha256 only"
+        );
+    } else {
+        check_release_signature(release, &data, keys, allow_local_http).await?;
+    }
     Ok(data)
 }
 
@@ -605,6 +781,14 @@ mod tests {
         assert_eq!(r.published_at.as_deref(), Some("2026-10-01T12:00:00Z"));
         assert!(r.asset_url.ends_with("/local-ai-chat.exe"));
         assert!(r.sha_url.ends_with("/local-ai-chat.exe.sha256"));
+        assert_eq!(r.sig_url, None); // optional: old releases have no signature
+
+        let signed = RELEASE_JSON.replace(
+            r#""assets": ["#,
+            r#""assets": [{"name": "local-ai-chat.exe.minisig", "browser_download_url": "https://github.com/x/y/releases/download/v2.1.0/local-ai-chat.exe.minisig"},"#,
+        );
+        let r = parse_release(signed.as_bytes()).unwrap();
+        assert!(r.sig_url.unwrap().ends_with("/local-ai-chat.exe.minisig"));
 
         let no_assets = r#"{"tag_name": "v2.1.0", "assets": []}"#;
         assert!(parse_release(no_assets.as_bytes()).is_err());
@@ -725,6 +909,7 @@ mod tests {
             published_at: None,
             asset_url: format!("{base}{exe}"),
             sha_url: format!("{base}{sha}"),
+            sig_url: None,
         }
     }
 
@@ -749,12 +934,13 @@ mod tests {
         let mut events = 0;
         let mut progress = |_: Progress| events += 1;
 
-        let data = download_verified(&release_at(&base, "/exe", "/sha"), true, &mut progress)
+        let data = download_verified(&release_at(&base, "/exe", "/sha"), &[], true, &mut progress)
             .await
             .unwrap();
         assert_eq!(data, b"new exe");
         let data = download_verified(
             &release_at(&base, "/exe-nolen", "/sha"),
+            &[],
             true,
             &mut progress,
         )
@@ -762,22 +948,32 @@ mod tests {
         .unwrap();
         assert_eq!(data, b"new exe");
 
-        let err = download_verified(&release_at(&base, "/tampered", "/sha"), true, &mut progress)
-            .await
-            .unwrap_err();
+        let err = download_verified(
+            &release_at(&base, "/tampered", "/sha"),
+            &[],
+            true,
+            &mut progress,
+        )
+        .await
+        .unwrap_err();
         assert!(format!("{err:#}").contains("checksum mismatch"), "{err:#}");
 
         for sha in ["/sha-big", "/sha-big-nolen"] {
-            let err = download_verified(&release_at(&base, "/exe", sha), true, &mut progress)
+            let err = download_verified(&release_at(&base, "/exe", sha), &[], true, &mut progress)
                 .await
                 .unwrap_err();
             assert!(format!("{err:#}").contains("too large"), "{err:#}");
         }
 
         // Local http without the dev override is refused before any request.
-        let err = download_verified(&release_at(&base, "/exe", "/sha"), false, &mut progress)
-            .await
-            .unwrap_err();
+        let err = download_verified(
+            &release_at(&base, "/exe", "/sha"),
+            &[],
+            false,
+            &mut progress,
+        )
+        .await
+        .unwrap_err();
         assert!(format!("{err:#}").contains("insecure"), "{err:#}");
         assert!(events > 0);
     }
@@ -804,6 +1000,326 @@ mod tests {
                 5000
             );
         }
+    }
+
+    // ------------------------------------------------------------ signatures
+    // Fixtures: tests/fixtures/update-signing (TEST-ONLY keys, see regen.sh).
+
+    macro_rules! fixture {
+        ($name:literal) => {
+            include_str!(concat!("../tests/fixtures/update-signing/", $name))
+        };
+    }
+    const PAYLOAD: &str = fixture!("payload.bin");
+    const SIG_PRIMARY: &str = fixture!("payload.bin.minisig");
+    const SIG_BACKUP: &str = fixture!("payload.bin.backup.minisig");
+    const SIG_OTHER_KEY: &str = fixture!("payload.bin.other-key.minisig");
+    const SIG_WRONG_VERSION: &str = fixture!("payload.bin.wrong-version.minisig");
+    const SIG_WRONG_NAME: &str = fixture!("payload.bin.wrong-name.minisig");
+    const SIG_LEGACY: &str = fixture!("payload.bin.legacy.minisig");
+    const TEST_BACKUP_PUB: &str = fixture!("test-backup.pub");
+    const TEST_OTHER_PUB: &str = fixture!("test-other.pub");
+    /// The version the fixtures were signed for (`local-ai-chat v9.9.9`).
+    const SIGNED_VERSION: &str = "9.9.9";
+
+    /// Primary + backup test keys, as the production list will hold them.
+    fn test_keys() -> Vec<&'static str> {
+        vec![
+            pub_key_line(TEST_PRIMARY_PUB),
+            pub_key_line(TEST_BACKUP_PUB),
+        ]
+    }
+
+    fn assert_sig_err(r: anyhow::Result<()>, needle: &str) {
+        let e = r.expect_err("verification should fail");
+        assert!(is_signature_error(&e), "not a SignatureError: {e:#}");
+        assert!(
+            format!("{e:#}").contains(needle),
+            "{needle:?} not in: {e:#}"
+        );
+    }
+
+    #[test]
+    fn signature_valid_passes() {
+        let keys = test_keys();
+        verify_signature(PAYLOAD.as_bytes(), SIG_PRIMARY, SIGNED_VERSION, &keys).unwrap();
+        // Only the primary key in the list is enough too.
+        verify_signature(PAYLOAD.as_bytes(), SIG_PRIMARY, SIGNED_VERSION, &keys[..1]).unwrap();
+        assert_eq!(expected_trusted_comment("2.3.0"), "local-ai-chat v2.3.0");
+        // CRLF line endings / a BOM (file re-saved on Windows) still parse.
+        let crlf = format!("\u{feff}{}", SIG_PRIMARY.replace('\n', "\r\n"));
+        verify_signature(PAYLOAD.as_bytes(), &crlf, SIGNED_VERSION, &keys).unwrap();
+    }
+
+    #[test]
+    fn signature_backup_key_passes() {
+        let keys = test_keys();
+        verify_signature(PAYLOAD.as_bytes(), SIG_BACKUP, SIGNED_VERSION, &keys).unwrap();
+        // ...but not when the backup key is not trusted.
+        assert_sig_err(
+            verify_signature(PAYLOAD.as_bytes(), SIG_BACKUP, SIGNED_VERSION, &keys[..1]),
+            "does not match a trusted key",
+        );
+    }
+
+    #[test]
+    fn signature_tampered_exe_fails() {
+        let keys = test_keys();
+        let mut tampered = PAYLOAD.as_bytes().to_vec();
+        tampered[0] ^= 1;
+        assert_sig_err(
+            verify_signature(&tampered, SIG_PRIMARY, SIGNED_VERSION, &keys),
+            "does not match a trusted key",
+        );
+        let mut longer = PAYLOAD.as_bytes().to_vec();
+        longer.push(0);
+        assert_sig_err(
+            verify_signature(&longer, SIG_PRIMARY, SIGNED_VERSION, &keys),
+            "does not match",
+        );
+    }
+
+    #[test]
+    fn signature_from_other_key_fails() {
+        assert_sig_err(
+            verify_signature(
+                PAYLOAD.as_bytes(),
+                SIG_OTHER_KEY,
+                SIGNED_VERSION,
+                &test_keys(),
+            ),
+            "does not match a trusted key",
+        );
+        // Trusting the other key makes it pass (the fixture itself is fine).
+        let other = [pub_key_line(TEST_OTHER_PUB)];
+        verify_signature(PAYLOAD.as_bytes(), SIG_OTHER_KEY, SIGNED_VERSION, &other).unwrap();
+    }
+
+    #[test]
+    fn signature_wrong_trusted_comment_fails() {
+        let keys = test_keys();
+        // Signed as v9.9.8: replaying an older signed exe as v9.9.9 is refused.
+        assert_sig_err(
+            verify_signature(PAYLOAD.as_bytes(), SIG_WRONG_VERSION, SIGNED_VERSION, &keys),
+            "not \"local-ai-chat v9.9.9\"",
+        );
+        verify_signature(PAYLOAD.as_bytes(), SIG_WRONG_VERSION, "9.9.8", &keys).unwrap();
+        // Right version, wrong product name.
+        assert_sig_err(
+            verify_signature(PAYLOAD.as_bytes(), SIG_WRONG_NAME, SIGNED_VERSION, &keys),
+            "lemon v9.9.9",
+        );
+        // A valid signature checked against another version.
+        assert_sig_err(
+            verify_signature(PAYLOAD.as_bytes(), SIG_PRIMARY, "9.9.10", &keys),
+            "not \"local-ai-chat v9.9.10\"",
+        );
+        // An edited trusted comment breaks the global signature.
+        let edited = SIG_WRONG_VERSION.replace("v9.9.8", "v9.9.9");
+        assert_sig_err(
+            verify_signature(PAYLOAD.as_bytes(), &edited, SIGNED_VERSION, &keys),
+            "does not match",
+        );
+    }
+
+    #[test]
+    fn signature_missing_or_malformed_fails() {
+        let keys = test_keys();
+        for bad in [
+            "",
+            "garbage",
+            "untrusted comment: x\nnot base64!!\ntrusted comment: local-ai-chat v9.9.9\nAAAA\n",
+            &SIG_PRIMARY.replace("trusted comment: ", "comment: "),
+            &SIG_PRIMARY.lines().take(2).collect::<Vec<_>>().join("\n"),
+        ] {
+            assert_sig_err(
+                verify_signature(PAYLOAD.as_bytes(), bad, SIGNED_VERSION, &keys),
+                "not valid",
+            );
+        }
+        // Legacy (non-pre-hashed) signatures are not accepted.
+        assert_sig_err(
+            verify_signature(PAYLOAD.as_bytes(), SIG_LEGACY, SIGNED_VERSION, &keys),
+            "does not match a trusted key",
+        );
+        // No trusted keys at all, or only malformed ones: nothing verifies.
+        assert_sig_err(
+            verify_signature(PAYLOAD.as_bytes(), SIG_PRIMARY, SIGNED_VERSION, &[]),
+            "does not match a trusted key",
+        );
+        assert_sig_err(
+            verify_signature(PAYLOAD.as_bytes(), SIG_PRIMARY, SIGNED_VERSION, &["RWnope"]),
+            "does not match a trusted key",
+        );
+    }
+
+    #[test]
+    fn production_keys_never_contain_test_keys() {
+        let test = [
+            pub_key_line(TEST_PRIMARY_PUB),
+            pub_key_line(TEST_BACKUP_PUB),
+            pub_key_line(TEST_OTHER_PUB),
+        ];
+        for t in test {
+            assert!(
+                t.starts_with("RW") && t.len() == 56,
+                "bad fixture key {t:?}"
+            );
+            assert!(
+                !TRUSTED_PUBLIC_KEYS.iter().any(|k| k.trim() == t),
+                "a TEST key is in update::TRUSTED_PUBLIC_KEYS"
+            );
+        }
+        // Every production key must parse (a typo would silently disable it).
+        for k in TRUSTED_PUBLIC_KEYS {
+            assert!(
+                minisign_verify::PublicKey::from_base64(k.trim()).is_ok(),
+                "TRUSTED_PUBLIC_KEYS entry {k:?} is not a minisign public key"
+            );
+        }
+        #[cfg(not(feature = "dev-test-update-key"))]
+        assert_eq!(trusted_keys(), TRUSTED_PUBLIC_KEYS);
+    }
+
+    /// The release workflow signs only when `keys/minisign-{primary,backup}.pub`
+    /// are committed. So: every committed key must be trusted by the app, and a
+    /// non-empty `TRUSTED_PUBLIC_KEYS` needs committed keys, or CI would publish
+    /// an unsigned release that these builds refuse. (Both empty = signing off.)
+    #[test]
+    fn keys_dir_matches_trusted_keys() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("keys");
+        let committed: Vec<String> = ["primary", "backup"]
+            .iter()
+            .filter_map(|k| std::fs::read_to_string(dir.join(format!("minisign-{k}.pub"))).ok())
+            .map(|f| pub_key_line(&f).to_string())
+            .collect();
+        for k in &committed {
+            assert!(
+                TRUSTED_PUBLIC_KEYS.iter().any(|t| t.trim() == k),
+                "keys/*.pub key {k:?} is not in update::TRUSTED_PUBLIC_KEYS"
+            );
+        }
+        assert_eq!(
+            committed.is_empty(),
+            TRUSTED_PUBLIC_KEYS.is_empty(),
+            "TRUSTED_PUBLIC_KEYS and keys/minisign-{{primary,backup}}.pub must be added together \
+             (docs/specs/signing.md)"
+        );
+    }
+
+    /// With an empty key list (the shipped state until the owner has keys) a
+    /// release is installed on its sha256 alone: a `.minisig` is neither
+    /// required nor downloaded, even a bad one, and a bad sha256 still fails.
+    #[tokio::test]
+    async fn empty_key_list_checks_sha256_only() {
+        let data = b"new exe bytes".to_vec();
+        let sha = format!("{}  local-ai-chat.exe\n", to_hex(&Sha256::digest(&data)));
+        let base = file_server(vec![
+            ("/exe", data.clone(), false),
+            ("/sha", sha.into_bytes(), false),
+            ("/bad.minisig", b"not a signature".to_vec(), false),
+            (
+                "/badsha",
+                format!("{}  x\n", "0".repeat(64)).into_bytes(),
+                false,
+            ),
+        ]);
+        let mut p = |_| {};
+        let mut r = release_at(&base, "/exe", "/sha");
+        assert!(r.sig_url.is_none());
+        assert_eq!(
+            download_verified(&r, &[], true, &mut p).await.unwrap(),
+            data
+        );
+        r.sig_url = Some(format!("{base}/bad.minisig"));
+        assert_eq!(
+            download_verified(&r, &[], true, &mut p).await.unwrap(),
+            data
+        );
+        let r = release_at(&base, "/exe", "/badsha");
+        assert!(download_verified(&r, &[], true, &mut p).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn download_requires_valid_signature_when_keys_set() {
+        let payload = PAYLOAD.as_bytes().to_vec();
+        let sha = format!("{}  local-ai-chat.exe\n", to_hex(&Sha256::digest(&payload)));
+        let base = file_server(vec![
+            ("/exe", payload.clone(), true),
+            ("/sha", sha.into_bytes(), true),
+            ("/sig", SIG_PRIMARY.as_bytes().to_vec(), true),
+            ("/sig-other", SIG_OTHER_KEY.as_bytes().to_vec(), true),
+            ("/sig-big", vec![b'a'; MAX_SIG_BYTES as usize + 1], false),
+        ]);
+        let keys = test_keys();
+        let mut progress = |_: Progress| {};
+        let with_sig = |sig: Option<&str>| {
+            let mut r = release_at(&base, "/exe", "/sha");
+            r.sig_url = sig.map(|s| format!("{base}{s}"));
+            r
+        };
+
+        let data = download_verified(&with_sig(Some("/sig")), &keys, true, &mut progress)
+            .await
+            .unwrap();
+        assert_eq!(data, payload);
+
+        // Empty key list (today's production build): sha256 only, signature ignored.
+        let data = download_verified(&with_sig(None), &[], true, &mut progress)
+            .await
+            .unwrap();
+        assert_eq!(data, payload);
+
+        for (sig, needle) in [
+            (None, "has no local-ai-chat.exe.minisig"),
+            (Some("/missing"), "could not download the signature"),
+            (Some("/sig-other"), "does not match a trusted key"),
+            (Some("/sig-big"), "too large"),
+        ] {
+            let e = download_verified(&with_sig(sig), &keys, true, &mut progress)
+                .await
+                .unwrap_err();
+            assert!(is_signature_error(&e), "{sig:?}: {e:#}");
+            assert!(format!("{e:#}").contains(needle), "{sig:?}: {e:#}");
+            assert!(format!("{e}").contains("https://fastkiwi.app/"), "{e}");
+        }
+
+        // A wrong version in the release (tag) vs. the signed comment.
+        let mut r = with_sig(Some("/sig"));
+        r.version = "9.9.10".into();
+        let e = download_verified(&r, &keys, true, &mut progress)
+            .await
+            .unwrap_err();
+        assert!(is_signature_error(&e), "{e:#}");
+
+        // A signature URL over plain http (no dev override) is refused too.
+        let e = download_verified(&with_sig(Some("/sig")), &keys, false, &mut progress)
+            .await
+            .unwrap_err();
+        assert!(format!("{e:#}").contains("insecure"), "{e:#}");
+    }
+
+    /// CI dry run (`.github/workflows/release.yml`, `workflow_dispatch`): verify a
+    /// file signed in the job with a throwaway key, using this module's verifier.
+    /// Run with `cargo test ci_dry_run_signature -- --ignored` and the env vars below.
+    #[test]
+    #[ignore = "CI dry run: needs LEMON_DRYRUN_{FILE,SIG,PUB,VERSION}"]
+    fn ci_dry_run_signature() {
+        let var = |k: &str| std::env::var(k).unwrap_or_else(|_| panic!("{k} is not set"));
+        let data = std::fs::read(var("LEMON_DRYRUN_FILE")).unwrap();
+        let sig = std::fs::read_to_string(var("LEMON_DRYRUN_SIG")).unwrap();
+        let pub_file = std::fs::read_to_string(var("LEMON_DRYRUN_PUB")).unwrap();
+        let version = var("LEMON_DRYRUN_VERSION");
+        let key = [pub_key_line(&pub_file)];
+        verify_signature(&data, &sig, &version, &key).expect("dry-run signature must verify");
+        // The same signature must be refused for another version, a tampered
+        // file, or when only the production keys are trusted.
+        assert!(verify_signature(&data, &sig, &format!("{version}-x"), &key).is_err());
+        let mut tampered = data.clone();
+        tampered[0] ^= 1;
+        assert!(verify_signature(&tampered, &sig, &version, &key).is_err());
+        assert!(verify_signature(&data, &sig, &version, TRUSTED_PUBLIC_KEYS).is_err());
+        println!("dry run: signature verified for local-ai-chat v{version}");
     }
 
     #[test]

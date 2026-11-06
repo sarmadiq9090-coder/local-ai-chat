@@ -1,0 +1,22 @@
+# Keeps the SHA-pinned GitHub Actions (.github/workflows/*.yml) and the Cargo
+# dependencies up to date with weekly PRs. Review action bumps before merging:
+# release.yml signs and publishes releases (docs/specs/signing.md).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7 # let a bad or hijacked release be caught before we adopt it
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
