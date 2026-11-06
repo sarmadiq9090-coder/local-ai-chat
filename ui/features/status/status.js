@@ -1,5 +1,6 @@
 // status.js — backend/Ollama connection status: the top-bar status text, the
-// "Ollama is not running" banner with its "start Ollama" button, and polling
+// "Ollama is not running" banner with its "start Ollama" button and "Get Ollama"
+// link (fixed URL OLLAMA_DOWNLOAD; opens in the browser via window.rs), and polling
 // (with backoff, 2.5 s → 15 s, for as long as it stays down) until Ollama answers.
 // Loads the installed models once Ollama is reachable, clears/disables the model
 // picker while it is down, and re-checks when the Ollama URL changes in settings
@@ -8,7 +9,7 @@
 
 import { state, on } from "../../core/state.js";
 import * as api from "../../core/api.js";
-import { $, setStatus, toast } from "../../core/dom.js";
+import { $, el, setStatus, toast } from "../../core/dom.js";
 import { t, registerStrings } from "../../core/i18n.js";
 import { settingsLoaded } from "../settings/settings.js";
 import { loadModels, clearModels, chatModels } from "../models/models.js";
@@ -19,6 +20,7 @@ registerStrings("status", strings);
 const POLL_FIRST_MS = 2500;
 const POLL_MAX_MS = 15000;
 const START_SLOW_MS = 20000; // "Start Ollama": give the button back after this long
+const OLLAMA_DOWNLOAD = "https://ollama.com/download";
 
 let connecting = false; // a status request is in flight
 let checked = false;    // at least one status request has finished
@@ -137,6 +139,10 @@ export default {
   name: "status",
   init() {
     $("#startOllama").addEventListener("click", startOllama);
+    // target=_blank: the native window opens http(s) links in the default browser (window.rs).
+    // data-i18n: re-translated by setLanguage() like the rest of the banner.
+    $("#startOllama").after(el("a", { id: "getOllama", class: "btn", href: OLLAMA_DOWNLOAD, target: "_blank",
+      rel: "noopener noreferrer", "data-i18n": "getOllama" }, t("getOllama")));
     on("ollama-url-changed", checkStatus);
     // Emitted by other features (chat) on network/502 errors: re-check right away.
     on("ollama-maybe-down", () => { if (!polling) checkStatus(); });

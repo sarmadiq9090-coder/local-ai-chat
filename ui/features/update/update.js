@@ -16,7 +16,7 @@
 import { state, on } from "../../core/state.js";
 import * as api from "../../core/api.js";
 import { $, el, openModal, toast } from "../../core/dom.js";
-import { t, registerStrings, getLanguage } from "../../core/i18n.js";
+import { t, registerStrings, formatDate, localizeDigits } from "../../core/i18n.js";
 import { icon } from "../../core/icons.js";
 import { renderMarkdown } from "../../core/markdown.js";
 import { settingsLoaded } from "../settings/settings.js";
@@ -57,12 +57,12 @@ function renderButton() {
   if (show) button.querySelector(".upd-label").textContent = t("upd_available", { version: info.latest });
 }
 
-const fmtBytes = n => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(0, Math.round(n / 1024))} KB`);
+const fmtBytes = n => localizeDigits(n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(0, Math.round(n / 1024))} KB`);
 
 function fmtDate(iso) {
   const d = iso ? new Date(iso) : null;
   if (!d || isNaN(d)) return null;
-  return d.toLocaleDateString(getLanguage() === "ar" ? "ar" : "en", { year: "numeric", month: "long", day: "numeric" });
+  return formatDate(d, { year: "numeric", month: "long", day: "numeric" });
 }
 
 /** The update dialog: notes + "Update now" with progress. */

@@ -1,0 +1,13 @@
+# Link the C runtime statically on Windows MSVC so local-ai-chat.exe runs on PCs
+# without the Visual C++ Redistributable (no VCRUNTIME140*.dll, MSVCP*.dll or
+# api-ms-win-crt-*.dll imports). CI checks the release exe's imports with
+# tools/check_imports.py. CI and releases build x86_64 only; the other two
+# targets are listed so a future build of them gets the same setting.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.i686-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

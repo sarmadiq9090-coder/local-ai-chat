@@ -24,6 +24,7 @@ import code from "./code/code.js";
 import assistants from "./assistants/assistants.js";
 import update from "./update/update.js";
 import crash from "./crash/crash.js";
+import support from "./support/support.js";
 
 export default [
   models,        // Esc 1: model dropdown
@@ -38,4 +39,5 @@ export default [
   assistants,
   update,
   crash,
+  support,
 ];

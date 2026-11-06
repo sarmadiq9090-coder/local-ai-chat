@@ -16,3 +16,5 @@
 @media (max-width: 800px) {
   #status { display: none; }
 }
+.banner .btn + .btn { margin-inline-start: 0; }
+.banner a.btn { color: inherit; text-decoration: none; }

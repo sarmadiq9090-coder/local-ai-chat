@@ -6,12 +6,26 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ### العربية
 - 🧯 **سجل الأعطال:** عند توقّف Lemon بشكل غير متوقع يُحفظ السبب في `crash.txt` داخل مجلد البيانات، ويظهر تنبيه في التشغيل التالي مع زر لفتح المجلد.
+- 🌐 **لغة التشغيل الأول تتبع ويندوز:** عربية إن كانت لغة واجهة ويندوز عربية، وإلا فالإنجليزية. اختيارك المحفوظ يبقى هو الأساس دائمًا.
+- ⬇️ **زر «تنزيل Ollama»** في شريط «Ollama غير شغّال» يفتح صفحة التنزيل الرسمية (ollama.com/download).
+- 🔤 **الأرقام:** أرقام 123 افتراضيًا في الواجهة العربية مع خيار في الإعدادات لعرض ١٢٣، وحقول الأرقام تقبل الشكلين.
+- 🆘 **الدعم:** قسم «الدعم» في الإعدادات فيه بريد support@fastkiwi.app وصفحة الدعم، و«تراخيص البرامج مفتوحة المصدر».
+- 📜 **إشعارات الطرف الثالث:** ملف `THIRD-PARTY-NOTICES.txt` يُولَّد من `Cargo.lock` (`tools/make_notices.py`) ومضمّن في البرنامج، ويتحقق CI من أنه محدَّث وأن كل التراخيص مسموحة.
+- 🪛 علامة «…» في نصوص الحقول الفارغة صارت في نهاية الجملة العربية لا في بدايتها.
+- 🧩 **يعمل دون Visual C++ Runtime:** صار البرنامج يعمل على أي ويندوز 10/11 دون تثبيت حزمة Microsoft Visual C++ (كان الإصدار 2.2.0 لا يفتح على الأجهزة التي تخلو منها). ويتحقق CI من أن الملف لا يعتمد إلا على مكتبات ويندوز نفسها.
 - 🔏 **تحديثات موقّعة:** صار المحدِّث قادرًا على التحقق من توقيع minisign لكل تحديث (`local-ai-chat.exe.minisig`) بمفاتيح مضمّنة في البرنامج، ويجب أن يطابق التوقيع رقم الإصدار نفسه. عند إضافة المفاتيح يُرفض أي تحديث بلا توقيع صالح، وتظهر رسالة واضحة مع رابط للتنزيل اليدوي. ما دامت قائمة المفاتيح فارغة يبقى السلوك كما هو (التحقق بـ sha256 فقط).
 - 🛡️ **إصدار أكثر أمانًا على GitHub:** تثبيت كل الإجراءات (actions) على commit محدد، وصلاحيات قراءة فقط افتراضيًا، والتوقيع يجري في بيئة `release` بعد موافقة المالك، مع شهادة مصدر البناء (attestation)، وإنشاء الإصدار كمسودة لا تُنشر إلا بعد التأكد من وجود الملفات الثلاثة. أُضيف Dependabot. دليل المالك: `RELEASING.md`.
 - 🚂 **إصدار بلا وسوم يدوية:** يكفي دمج طلب يرفع رقم الإصدار في `Cargo.toml`؛ يبني GitHub البرنامج وينتظر موافقة المالك ثم ينشئ الوسم والإصدار بنفسه. الدمج بلا تغيير في الرقم لا ينشر شيئًا.
 
 ### English
 - 🧯 **Crash log:** panics are recorded to `crash.txt` in the data folder; the next start shows a one-line notice with an "Open folder" button.
+- 🌐 **First run follows the Windows display language:** Arabic on Arabic Windows, English otherwise. A saved choice always wins.
+- ⬇️ **"Get Ollama"** button in the "Ollama isn't running" banner, opening ollama.com/download.
+- 🔤 **Digits:** Western 123 by default in the Arabic UI, with a setting for Arabic-Indic ١٢٣; number fields accept both.
+- 🆘 **Support** section in Settings: support@fastkiwi.app, the support page and the open-source licences.
+- 📜 **Third-party notices:** `THIRD-PARTY-NOTICES.txt`, generated from `Cargo.lock` by `tools/make_notices.py`, embedded in the exe; CI checks it is current and every licence is on the allowlist.
+- 🪛 Empty-field placeholders in the Arabic UI keep their "…" at the end of the sentence.
+- 🧩 **Runs without the Visual C++ runtime:** the exe now links the C runtime statically, so it starts on Windows 10/11 PCs without the Visual C++ Redistributable (2.2.0 needed VCRUNTIME140.dll). CI fails if the exe imports any DLL that is not part of Windows (`tools/check_imports.py`).
 - 🔏 **Signed updates:** the updater can verify a minisign signature (`local-ai-chat.exe.minisig`) by compiled-in keys, with the trusted comment bound to the exact version (`local-ai-chat vX.Y.Z`). Once keys are compiled in, unsigned or badly signed updates are refused with a clear message and a manual-download link. With the key list still empty, behavior is unchanged (sha256 only). Spec: `docs/specs/signing.md`.
 - 🛡️ **Hardened release workflow:** SHA-pinned actions, read-only default token, no credentials persisted and no build cache. Signing runs in the owner-approved `release` Environment. Releases get a build-provenance attestation and are published only after a draft holding all three assets is checked. Also: Dependabot for actions and cargo, and a `workflow_dispatch` dry run.
 - 🚂 **Release on version bump:** merging a PR that bumps the `Cargo.toml` version releases it (after owner approval); CI creates the `v<version>` tag itself, with notes from `CHANGELOG.md`. Merges with an unchanged version only run a quick version check.

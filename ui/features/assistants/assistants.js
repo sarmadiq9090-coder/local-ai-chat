@@ -25,7 +25,7 @@ import { state, on, emit } from "../../core/state.js";
 import * as api from "../../core/api.js";
 import { $, el, iconButton, toast, openModal, confirmDialog } from "../../core/dom.js";
 import { icon } from "../../core/icons.js";
-import { t, registerStrings, getLanguage } from "../../core/i18n.js";
+import { t, registerStrings, getLanguage, formatNumber, localizeDigits, parseNumber } from "../../core/i18n.js";
 import { closeMobileSidebar } from "../sidebar/sidebar.js";
 import { loadModels, modelInstalled, loadCaps, supportsThinking, fmtSize } from "../models/models.js";
 import { send } from "../chat/chat.js";
@@ -526,7 +526,7 @@ export function sourcesEl(sources) {
         el("span", { class: "asst-src-n", dir: "ltr" }, `[${s.n}]`),
         el("span", { class: "asst-src-name", dir: "auto" }, s.doc_name),
         s.kind === "digest" ? el("span", { class: "asst-badge" }, t("asst_kindDigest")) : null,
-        el("span", { class: "asst-src-score", dir: "ltr" }, Number(s.score).toFixed(2))),
+        el("span", { class: "asst-src-score", dir: "ltr" }, localizeDigits(Number(s.score).toFixed(2)))),
       el("div", { class: "asst-src-snippet", dir: "auto" }, s.snippet)))));
   queueMicrotask(() => {
     const body = details.previousElementSibling;
@@ -590,7 +590,8 @@ export function openEditor(a) {
   const strict = el("input", { type: "checkbox" });
   const embed = el("input", { class: "input", dir: "ltr", spellcheck: false });
   const deepIn = el("input", { type: "checkbox" });
-  const ctxIn = el("input", { class: "input", type: "number", min: MIN_NUM_CTX, max: MAX_NUM_CTX, step: 1024, dir: "ltr" });
+  // Text, not type=number: that drops Arabic-Indic digits (١٢٣); parseNumber reads both.
+  const ctxIn = el("input", { class: "input", type: "text", inputmode: "numeric", autocomplete: "off", dir: "ltr" });
   const thinkSel = el("select", { class: "input" },
     el("option", { value: "auto" }, t("asst_thinkAuto")),
     el("option", { value: "on" }, t("asst_thinkOn")),
@@ -605,24 +606,24 @@ export function openEditor(a) {
   strict.checked = a ? !!a.strict : true;
   embed.value = a?.embed_model || "bge-m3";
   deepIn.checked = a ? !!a.deep : true;
-  ctxIn.value = a?.num_ctx || "";
+  ctxIn.value = a?.num_ctx ? localizeDigits(a.num_ctx) : "";
   thinkSel.value = a?.think === true ? "on" : a?.think === false ? "off" : "auto";
 
   const autoCtx = () => (deepIn.checked ? DEEP_NUM_CTX : Number(state.settings?.num_ctx || 8192));
   const renderCtx = () => {
     ctxIn.placeholder = t("asst_numCtxAuto", { n: autoCtx() });
-    const n = Number(ctxIn.value) || autoCtx();
+    const n = parseNumber(ctxIn.value) || autoCtx();
     ctxWarn.hidden = n <= COMFORT_NUM_CTX;
     ctxWarn.lastElementChild.textContent = t("asst_numCtxWarn", { n: COMFORT_NUM_CTX });
   };
   ctxIn.addEventListener("input", renderCtx);
   // The server clamps num_ctx to [MIN_NUM_CTX, MAX_NUM_CTX]: clamp here too and say so.
   const clampCtx = () => {
-    const v = Number(ctxIn.value);
-    if (!ctxIn.value.trim() || !(v > 0)) { ctxIn.value = ""; renderCtx(); return; }
+    const v = parseNumber(ctxIn.value);
+    if (!(v > 0)) { ctxIn.value = ""; renderCtx(); return; }
     const n = Math.min(MAX_NUM_CTX, Math.max(MIN_NUM_CTX, Math.round(v)));
     if (n !== v) {
-      ctxIn.value = String(n);
+      ctxIn.value = localizeDigits(n);
       toast(t("asst_numCtxClamped", { min: MIN_NUM_CTX, max: MAX_NUM_CTX, n }), "error", 6000);
     }
     renderCtx();
@@ -771,7 +772,7 @@ export function openEditor(a) {
         if (p.total) {
           const pct = Math.min(100, ((p.completed || 0) / p.total) * 100);
           setBar(pullBar, pct);
-          text += ` — ${fmtSize(p.completed)} / ${fmtSize(p.total)} (${pct.toFixed(0)}%)`;
+          text += ` — ${fmtSize(p.completed)} / ${fmtSize(p.total)} (${localizeDigits(pct.toFixed(0))}%)`;
         }
         pullText.textContent = text;
       }
@@ -1018,7 +1019,7 @@ export function openEditor(a) {
         textEl.textContent = r.text;
         textEl.scrollTop = 0;
         const pages = r.pages ? plural("asst_pages", r.pages) : t("asst_noPages");
-        stats.textContent = [t("asst_docStats", { pages, chars: total.toLocaleString(getLanguage()), chunks: plural("asst_chunks", r.chunks) }),
+        stats.textContent = [t("asst_docStats", { pages, chars: formatNumber(total), chunks: plural("asst_chunks", r.chunks) }),
           r.digest_chunks ? t("asst_digestChunks", { n: r.digest_chunks }) : null].filter(Boolean).join(" · ");
         pageInfo.textContent = t("asst_pageOf", { from: total ? offset + 1 : 0, to: Math.min(total, offset + TEXT_PAGE_CHARS), total });
         prev.disabled = offset <= 0;
@@ -1046,7 +1047,7 @@ export function openEditor(a) {
       try { text = (await call("GET", `${base}/digest`)).text || ""; } catch { /* none yet */ }
       dgText.value = text;
       const g = doc.digest;
-      const chars = (g?.chars || 0).toLocaleString(getLanguage());
+      const chars = formatNumber(g?.chars || 0);
       dgInfo.textContent = !g ? t("asst_digestEmpty")
         : g.status === "failed" ? `${t("asst_digestFailed")}: ${g.error || ""}`
         : g.status === "edited" ? t("asst_digestEditedInfo", { chars })
@@ -1135,7 +1136,7 @@ export function openEditor(a) {
     testIn, el("div", { class: "asst-k-actions" }, testAsk, testClear), testOut);
   let testHistory = [];
   let testCtl = null;
-  const secs = ms => (Number(ms || 0) / 1000).toFixed(1);
+  const secs = ms => localizeDigits((Number(ms || 0) / 1000).toFixed(1));
   const runTest = async () => {
     const q = testIn.value.trim();
     if (!q || testCtl) return;
@@ -1162,7 +1163,7 @@ export function openEditor(a) {
             el("span", { class: "asst-src-name", dir: "auto" }, p.doc_name),
             p.kind === "digest" ? el("span", { class: "asst-badge" }, t("asst_kindDigest")) : null,
             p.expanded ? el("span", { class: "asst-badge" }, t("asst_kindExpanded")) : null,
-            el("span", { class: "asst-src-score", dir: "ltr" }, Number(p.score).toFixed(2))),
+            el("span", { class: "asst-src-score", dir: "ltr" }, localizeDigits(Number(p.score).toFixed(2)))),
           el("details", {}, el("summary", { class: "asst-src-snippet", dir: "auto" }, snippetOf(p.text).slice(0, 160)),
             el("div", { class: "asst-src-snippet", dir: "auto" }, p.text)))))
         : el("div", { class: "muted" }, t("asst_testNoPassages"));
@@ -1217,7 +1218,7 @@ export function openEditor(a) {
 
   saveBtn.addEventListener("click", async () => {
     clampCtx();
-    const ctxVal = Number(ctxIn.value);
+    const ctxVal = parseNumber(ctxIn.value);
     const body = {
       name: name.value.trim(),
       icon: iconIn.value.trim() || "🤖",
