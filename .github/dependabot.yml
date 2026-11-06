@@ -7,6 +7,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7 # let a bad or hijacked release be caught before we adopt it
     groups:
       github-actions:
         patterns: ["*"]
@@ -15,4 +17,6 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
