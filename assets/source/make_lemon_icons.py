@@ -1,4 +1,4 @@
-# Generates the Lemon app icon: assets/icon.ico/png come from option 3 (code lemon on dark).
+# Old icon options (not used). The app icon (assets/icon.ico, icon.png) is FastKiwi brand v2: assets/source/lemon*.svg.
 """Generate 4 lemon-themed icon options for "Lemon — Local AI Chat".
 
 Each option is drawn on a 1024px design grid, rendered at SS x supersampling,
