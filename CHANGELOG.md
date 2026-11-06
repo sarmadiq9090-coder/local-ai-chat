@@ -13,6 +13,8 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 - 📜 **إشعارات الطرف الثالث:** ملف `THIRD-PARTY-NOTICES.txt` يُولَّد من `Cargo.lock` (`tools/make_notices.py`) ومضمّن في البرنامج، ويتحقق CI من أنه محدَّث وأن كل التراخيص مسموحة.
 - 🪛 علامة «…» في نصوص الحقول الفارغة صارت في نهاية الجملة العربية لا في بدايتها.
 - 🧩 **يعمل دون Visual C++ Runtime:** صار البرنامج يعمل على أي ويندوز 10/11 دون تثبيت حزمة Microsoft Visual C++ (كان الإصدار 2.2.0 لا يفتح على الأجهزة التي تخلو منها). ويتحقق CI من أن الملف لا يعتمد إلا على مكتبات ويندوز نفسها.
+- 🔏 **تحديثات موقّعة:** صار المحدِّث قادرًا على التحقق من توقيع minisign لكل تحديث (`local-ai-chat.exe.minisig`) بمفاتيح مضمّنة في البرنامج، ويجب أن يطابق التوقيع رقم الإصدار نفسه. عند إضافة المفاتيح يُرفض أي تحديث بلا توقيع صالح، وتظهر رسالة واضحة مع رابط للتنزيل اليدوي. ما دامت قائمة المفاتيح فارغة يبقى السلوك كما هو (التحقق بـ sha256 فقط).
+- 🛡️ **إصدار أكثر أمانًا على GitHub:** تثبيت كل الإجراءات (actions) على commit محدد، وصلاحيات قراءة فقط افتراضيًا، والتوقيع يجري في بيئة `release` بعد موافقة المالك، مع شهادة مصدر البناء (attestation)، وإنشاء الإصدار كمسودة لا تُنشر إلا بعد التأكد من وجود الملفات الثلاثة. أُضيف Dependabot. دليل المالك: `RELEASING.md`.
 
 ### English
 - 🧯 **Crash log:** panics are recorded to `crash.txt` in the data folder; the next start shows a one-line notice with an "Open folder" button.
@@ -23,6 +25,8 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 - 📜 **Third-party notices:** `THIRD-PARTY-NOTICES.txt`, generated from `Cargo.lock` by `tools/make_notices.py`, embedded in the exe; CI checks it is current and every licence is on the allowlist.
 - 🪛 Empty-field placeholders in the Arabic UI keep their "…" at the end of the sentence.
 - 🧩 **Runs without the Visual C++ runtime:** the exe now links the C runtime statically, so it starts on Windows 10/11 PCs without the Visual C++ Redistributable (2.2.0 needed VCRUNTIME140.dll). CI fails if the exe imports any DLL that is not part of Windows (`tools/check_imports.py`).
+- 🔏 **Signed updates:** the updater can verify a minisign signature (`local-ai-chat.exe.minisig`) by compiled-in keys, with the trusted comment bound to the exact version (`local-ai-chat vX.Y.Z`). Once keys are compiled in, unsigned or badly signed updates are refused with a clear message and a manual-download link. With the key list still empty, behavior is unchanged (sha256 only). Spec: `docs/specs/signing.md`.
+- 🛡️ **Hardened release workflow:** SHA-pinned actions, read-only default token, no credentials persisted and no build cache. Signing runs in the owner-approved `release` Environment. Releases get a build-provenance attestation and are published only after a draft holding all three assets is checked. Also: Dependabot for actions and cargo, and a `workflow_dispatch` dry run.
 
 ### Security
 - الخادم المحلي يرفض الطلبات القادمة من مواقع أخرى عبر ترويسة `Sec-Fetch-Site` (مثل `<img>` أو `<script>` من صفحة ويب)، ويضيف `Cross-Origin-Resource-Policy: same-origin` و`X-Content-Type-Options: nosniff` لكل الردود.

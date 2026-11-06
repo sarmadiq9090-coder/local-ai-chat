@@ -23,6 +23,10 @@ export default {
     upd_current: "أنت تستخدم أحدث إصدار (v{version}).",
     upd_check_failed: "تعذّر التحقق من التحديثات: {error}",
     upd_view: "عرض التحديث",
+    upd_sig_failed: "تعذّر التحقق من أن هذا التحديث صادر فعلًا عن مطوّر Lemon (التوقيع مفقود أو غير صالح)، لذلك لم يُثبَّت وبقي إصدارك الحالي كما هو. يمكنك تنزيل الإصدار الجديد يدويًا من:",
+    upd_sig_releases: "صفحة الإصدارات على GitHub",
+    upd_sig_site: "fastkiwi.app",
+    upd_sig_toast: "لم يُثبَّت التحديث: تعذّر التحقق من توقيعه.",
   },
   en: {
     upd_available: "Update available v{version}",
@@ -45,5 +49,9 @@ export default {
     upd_current: "You're on the latest version (v{version}).",
     upd_check_failed: "Couldn't check for updates: {error}",
     upd_view: "View update",
+    upd_sig_failed: "This update couldn't be verified as coming from the Lemon developer (its signature is missing or invalid), so it was not installed and your current version was kept. You can download the new version manually from:",
+    upd_sig_releases: "the GitHub releases page",
+    upd_sig_site: "fastkiwi.app",
+    upd_sig_toast: "Update not installed: its signature couldn't be verified.",
   },
 };

@@ -21,6 +21,15 @@
 .upd-progress[hidden] { display: none; }
 .upd-status { margin-top: 8px; font-size: 13px; unicode-bidi: plaintext; text-align: start; }
 .upd-status.err { color: var(--danger); }
+.upd-sig-fail {
+  margin-top: 12px; padding: 10px 12px; border-radius: 10px; font-size: 13px;
+  color: var(--text); border: 1px solid color-mix(in srgb, var(--danger) 55%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+.upd-sig-fail[hidden] { display: none; }
+.upd-sig-fail p { margin: 0; unicode-bidi: plaintext; text-align: start; }
+.upd-sig-links { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 6px !important; }
+.upd-sig-links a { color: var(--accent); font-weight: 600; }
 
 .upd-section { border-top: 1px solid var(--line); padding-top: 14px; }
 .upd-toggle { display: flex; align-items: center; gap: 10px; font-size: 14px; cursor: pointer; margin-bottom: 10px; }

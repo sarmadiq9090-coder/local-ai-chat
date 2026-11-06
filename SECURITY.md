@@ -60,7 +60,14 @@ anything; on any mismatch the current exe is left untouched. That checksum
 protects **integrity** (a corrupted or truncated download), **not
 authorship**: both files come from the same release, so someone able to
 publish a release on this repository could publish a matching checksum too.
-Release signing (minisign and/or Authenticode) is on the roadmap.
+
+Authorship is covered by **minisign signatures** (`local-ai-chat.exe.minisig`),
+made in CI only after the owner approves the release, and checked by the
+updater against public keys compiled into the app. Once a build ships with
+those keys, an update without a valid signature for exactly that version is
+refused. Details, threat model and key handling:
+[docs/specs/signing.md](docs/specs/signing.md). Each release also carries a
+GitHub build-provenance attestation (`gh attestation verify`).
 
 ### In scope
 
