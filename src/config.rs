@@ -79,10 +79,19 @@ pub struct Settings {
     pub theme: Theme,
     pub default_model: Option<String>,
     pub think: bool,
-    /// UI language: "ar" (default) or "en". Unknown values become "ar".
+    /// UI language: "ar" or "en". Unknown values become "ar". With no saved
+    /// choice (first run) it follows the Windows display language (`Settings::load`).
     pub language: String,
+    /// Digits in the Arabic UI: "latn" (123, default) or "arab" (Arabic-Indic ١٢٣).
+    /// Unknown values become "latn". The English UI always uses 123.
+    pub digits: String,
     /// Check GitHub for a newer release on start and every 6 h (default on).
     pub auto_update: bool,
+    /// Not stored: true while settings.json holds no `language` (the first-run
+    /// default is in use). GET /settings reports it so the UI can keep the language
+    /// an existing user already had; any save stores `language` and clears it.
+    #[serde(skip)]
+    pub language_unsaved: bool,
 }
 
 /// Default system prompts per UI language. A prompt still equal to one of these
@@ -101,20 +110,85 @@ impl Default for Settings {
             default_model: None,
             think: false,
             language: "ar".into(),
+            digits: "latn".into(),
             auto_update: true,
+            language_unsaved: false,
         }
     }
 }
 
+/// "ar" when the Windows display (UI) language is Arabic, otherwise "en".
+/// Decides the language only while the user has not saved one (first run).
+pub fn system_ui_language() -> &'static str {
+    #[cfg(windows)]
+    {
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GetUserDefaultUILanguage() -> u16;
+        }
+        // SAFETY: no arguments, no pointers; returns the user's UI LANGID.
+        language_for_langid(unsafe { GetUserDefaultUILanguage() })
+    }
+    #[cfg(not(windows))]
+    {
+        // Dev builds on Linux/macOS: the usual locale variables.
+        let locale = ["LC_ALL", "LC_MESSAGES", "LANG"]
+            .iter()
+            .filter_map(|k| std::env::var(k).ok())
+            .find(|v| !v.is_empty())
+            .unwrap_or_default();
+        language_for_locale(&locale)
+    }
+}
+
+/// LANGID → UI language: the primary language (low 10 bits) LANG_ARABIC (0x01)
+/// covers every Arabic region (ar-SA 0x0401, ar-EG 0x0C01, ar-IQ 0x0801, …).
+#[cfg_attr(not(windows), allow(dead_code))]
+fn language_for_langid(langid: u16) -> &'static str {
+    if langid & 0x3ff == 0x01 { "ar" } else { "en" }
+}
+
+/// POSIX locale ("ar_IQ.UTF-8", "en_US", "C") → UI language.
+#[cfg_attr(windows, allow(dead_code))]
+fn language_for_locale(locale: &str) -> &'static str {
+    let lang = locale.split(['_', '-', '.', '@']).next().unwrap_or("");
+    if lang.eq_ignore_ascii_case("ar") {
+        "ar"
+    } else {
+        "en"
+    }
+}
+
 impl Settings {
-    /// Missing file → defaults. A file that isn't a JSON object is renamed to
+    /// Defaults for a user who has not chosen a language yet: the UI language
+    /// (and the built-in prompt) follow the Windows display language.
+    pub fn first_run() -> Self {
+        Self::first_run_in(system_ui_language())
+    }
+
+    fn first_run_in(language: &str) -> Self {
+        Self {
+            language: language.into(),
+            language_unsaved: true,
+            ..Self::default()
+        }
+        .sanitized()
+    }
+
+    /// Missing file → `first_run()` defaults (so is a file without a
+    /// `language` field: a saved choice always wins). A file that isn't a JSON object is renamed to
     /// `settings.json.corrupt-<unix ms>` and defaults are used. In an object,
     /// only the fields that fail (wrong type, unknown enum value, invalid
     /// `ollama_url`) fall back to their defaults; the original file is copied
     /// to a `.corrupt-<unix ms>` backup first, so nothing is silently lost.
     pub fn load(path: &Path) -> Self {
+        Self::load_with(path, Self::first_run())
+    }
+
+    /// `load` with the given defaults (tests pass a fixed first-run language).
+    fn load_with(path: &Path, defaults: Self) -> Self {
         let Ok(bytes) = std::fs::read(path) else {
-            return Self::default();
+            return defaults;
         };
         let obj = match serde_json::from_slice::<serde_json::Value>(&bytes) {
             Ok(serde_json::Value::Object(obj)) => obj,
@@ -131,10 +205,12 @@ impl Settings {
                         path.display()
                     ),
                 }
-                return Self::default();
+                return defaults;
             }
         };
-        let (settings, dropped) = Self::default().merged_lenient(obj);
+        let language_unsaved = !obj.contains_key("language");
+        let (mut settings, dropped) = defaults.merged_lenient(obj);
+        settings.language_unsaved = language_unsaved;
         if !dropped.is_empty() {
             let backup = corrupt_backup_path(path);
             let _ = std::fs::copy(path, &backup);
@@ -206,6 +282,9 @@ impl Settings {
         if self.language != "en" {
             self.language = "ar".into();
         }
+        if self.digits != "arab" {
+            self.digits = "latn".into();
+        }
         // Keep the built-in prompt in the UI language; never touch a custom one.
         let (own, other) = if self.language == "en" {
             (DEFAULT_PROMPT_EN, DEFAULT_PROMPT_AR)
@@ -263,6 +342,72 @@ mod language_tests {
         assert_eq!(s.language, "ar");
         let s: Settings = serde_json::from_str(r#"{"language":"fr"}"#).unwrap();
         assert_eq!(s.sanitized().language, "ar");
+    }
+
+    #[test]
+    fn digits_default_to_western() {
+        let s: Settings = serde_json::from_str(r#"{"language":"ar"}"#).unwrap();
+        assert_eq!(s.digits, "latn");
+        let s: Settings = serde_json::from_str(r#"{"digits":"arab"}"#).unwrap();
+        assert_eq!(s.sanitized().digits, "arab");
+        let s: Settings = serde_json::from_str(r#"{"digits":"roman"}"#).unwrap();
+        assert_eq!(s.sanitized().digits, "latn");
+    }
+
+    #[test]
+    fn first_run_follows_windows_language() {
+        assert_eq!(language_for_langid(0x0401), "ar"); // ar-SA
+        assert_eq!(language_for_langid(0x0801), "ar"); // ar-IQ
+        assert_eq!(language_for_langid(0x0C01), "ar"); // ar-EG
+        assert_eq!(language_for_langid(0x0409), "en"); // en-US
+        assert_eq!(language_for_langid(0x040C), "en"); // fr-FR
+        assert_eq!(language_for_langid(0x0429), "en"); // fa-IR: not Arabic
+        assert_eq!(language_for_locale("ar_IQ.UTF-8"), "ar");
+        assert_eq!(language_for_locale("en_US.UTF-8"), "en");
+        assert_eq!(language_for_locale("C"), "en");
+        assert_eq!(language_for_locale(""), "en");
+
+        let en = Settings::first_run_in("en");
+        assert_eq!(en.language, "en");
+        assert_eq!(en.system_prompt, DEFAULT_PROMPT_EN);
+        let ar = Settings::first_run_in("ar");
+        assert_eq!(ar.language, "ar");
+        assert_eq!(ar.system_prompt, DEFAULT_PROMPT_AR);
+    }
+
+    #[test]
+    fn saved_language_wins_over_windows_language() {
+        let dir = std::env::temp_dir().join(format!("lac-settings-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("settings.json");
+        // No file yet: the first-run language, marked as not saved.
+        assert!(Settings::load_with(&file, Settings::first_run_in("en")).language_unsaved);
+        assert_eq!(
+            Settings::load_with(&file, Settings::first_run_in("en")).language,
+            "en"
+        );
+        // A file without a language field (never chosen): still the first-run language.
+        std::fs::write(&file, br#"{"theme":"light"}"#).unwrap();
+        let s = Settings::load_with(&file, Settings::first_run_in("en"));
+        assert_eq!((s.language.as_str(), s.theme), ("en", Theme::Light));
+        assert!(s.language_unsaved);
+        // Any save stores the language (the flag is never written).
+        let merged = s.merged(serde_json::json!({ "think": true })).unwrap();
+        assert!(!merged.language_unsaved);
+        merged.save(&file).unwrap();
+        assert!(!Settings::load_with(&file, Settings::first_run_in("ar")).language_unsaved);
+        // A saved choice wins on any Windows language.
+        std::fs::write(&file, br#"{"language":"ar"}"#).unwrap();
+        assert_eq!(
+            Settings::load_with(&file, Settings::first_run_in("en")).language,
+            "ar"
+        );
+        std::fs::write(&file, br#"{"language":"en"}"#).unwrap();
+        assert_eq!(
+            Settings::load_with(&file, Settings::first_run_in("ar")).language,
+            "en"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

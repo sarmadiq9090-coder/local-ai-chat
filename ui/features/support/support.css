@@ -1,0 +1,12 @@
+/* support.css — "Support" section of the settings dialog and the licence notices modal. */
+
+.sup-section { border-top: 1px solid var(--line); padding-top: 14px; }
+.sup-text { margin: 0; font-size: 14px; }
+.sup-links { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; }
+.sup-link { color: var(--accent); font-size: 14px; }
+.sup-link[dir="ltr"] { unicode-bidi: isolate; }
+.sup-notices-text {
+  margin: 0; max-height: 65vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  font-size: 12px; line-height: 1.5; text-align: start; direction: ltr; unicode-bidi: isolate;
+  color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 12px;
+}

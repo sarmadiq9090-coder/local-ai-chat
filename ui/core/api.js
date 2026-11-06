@@ -98,3 +98,11 @@ export const installUpdate = signal => streamPost("/api/app/update/install", {},
 export const getCrashInfo = () => request("GET", "/api/app/crash");
 export const markCrashSeen = () => request("POST", "/api/app/crash/seen");
 export const openCrashFolder = () => request("POST", "/api/app/crash/open");
+
+// ---------- support (features/support) ----------
+/** Third-party licence notices: plain text (THIRD-PARTY-NOTICES.txt embedded in the exe). */
+export async function getNotices() {
+  const res = await fetch("/api/app/notices");
+  if (!res.ok) throw await httpError(res);
+  return res.text();
+}

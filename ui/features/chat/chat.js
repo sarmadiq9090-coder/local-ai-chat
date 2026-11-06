@@ -18,7 +18,7 @@ import { supportsThinking } from "../models/models.js";
 import { fenceFor } from "../exporter/exporter.js";
 import { prepareAssistantTurn, sourcesEl } from "../assistants/assistants.js";
 import { icon } from "../../core/icons.js";
-import { t, registerStrings } from "../../core/i18n.js";
+import { t, registerStrings, localizeDigits } from "../../core/i18n.js";
 import strings from "./strings.js";
 
 registerStrings("chat", strings);
@@ -55,7 +55,7 @@ export function buildChatMessages(messages, systemPrompt) {
 }
 
 /** Human-readable size: bytes below 1 KB, else KB with one decimal. Pure. */
-export const formatSize = bytes => (bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`);
+export const formatSize = bytes => localizeDigits(bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`);
 
 /**
  * Decode a text file's bytes. UTF-8 first; if that gives many U+FFFD and the bytes look like
@@ -210,7 +210,7 @@ function messageEl(m, index, conv, streaming = false) {
     streaming ? null : el("div", { class: "actions" },
       m.content ? iconButton("copy", t("copy"), e => copyWithFeedback(e.currentTarget, m.content)) : null,
       isLast ? iconButton("refresh", t("regenerate"), regenerate) : null,
-      el("span", { class: "meta", dir: "ltr" }, [m.model, m.stats].filter(Boolean).join(" · ")),
+      el("span", { class: "meta", dir: "ltr" }, [m.model, m.stats && localizeDigits(m.stats)].filter(Boolean).join(" · ")),
       m.stopped ? el("span", { class: "meta stopped" }, t("stopped")) : null));
 }
 

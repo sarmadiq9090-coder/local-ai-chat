@@ -183,3 +183,8 @@ textarea.input { resize: vertical; line-height: 1.6; unicode-bidi: plaintext; te
   .conv-title-top { display: none; }
   .field-row { flex-direction: column; }
 }
+
+/* An empty dir="auto" field has no strong character, so it (and its placeholder) would lay
+   out LTR: in the Arabic UI the placeholder hugs the left edge and its trailing "…" lands
+   right after the first word. While the placeholder shows, use the UI direction instead. */
+:root[dir="rtl"] :is(input, textarea)[dir="auto"]:placeholder-shown { direction: rtl; }

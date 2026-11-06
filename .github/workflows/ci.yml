@@ -39,6 +39,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --all-targets -- -D warnings
 
+  notices:
+    name: third-party notices up to date
+    # Cross-platform: reads Cargo.lock for x86_64-pc-windows-msvc via cargo metadata.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check THIRD-PARTY-NOTICES.txt (and that every licence is allowed)
+        run: python3 tools/make_notices.py --check
+
   build:
     name: test + release build
     runs-on: windows-latest
@@ -54,6 +64,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: local-ai-chat-${{ github.sha }}
-          path: target/release/local-ai-chat.exe
+          path: |
+            target/release/local-ai-chat.exe
+            THIRD-PARTY-NOTICES.txt
           if-no-files-found: error
           retention-days: 14

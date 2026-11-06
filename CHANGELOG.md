@@ -6,9 +6,21 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ### العربية
 - 🧯 **سجل الأعطال:** عند توقّف Lemon بشكل غير متوقع يُحفظ السبب في `crash.txt` داخل مجلد البيانات، ويظهر تنبيه في التشغيل التالي مع زر لفتح المجلد.
+- 🌐 **لغة التشغيل الأول تتبع ويندوز:** عربية إن كانت لغة واجهة ويندوز عربية، وإلا فالإنجليزية. اختيارك المحفوظ يبقى هو الأساس دائمًا.
+- ⬇️ **زر «تنزيل Ollama»** في شريط «Ollama غير شغّال» يفتح صفحة التنزيل الرسمية (ollama.com/download).
+- 🔤 **الأرقام:** أرقام 123 افتراضيًا في الواجهة العربية مع خيار في الإعدادات لعرض ١٢٣، وحقول الأرقام تقبل الشكلين.
+- 🆘 **الدعم:** قسم «الدعم» في الإعدادات فيه بريد support@fastkiwi.app وصفحة الدعم، و«تراخيص البرامج مفتوحة المصدر».
+- 📜 **إشعارات الطرف الثالث:** ملف `THIRD-PARTY-NOTICES.txt` يُولَّد من `Cargo.lock` (`tools/make_notices.py`) ومضمّن في البرنامج، ويتحقق CI من أنه محدَّث وأن كل التراخيص مسموحة.
+- 🪛 علامة «…» في نصوص الحقول الفارغة صارت في نهاية الجملة العربية لا في بدايتها.
 
 ### English
 - 🧯 **Crash log:** panics are recorded to `crash.txt` in the data folder; the next start shows a one-line notice with an "Open folder" button.
+- 🌐 **First run follows the Windows display language:** Arabic on Arabic Windows, English otherwise. A saved choice always wins.
+- ⬇️ **"Get Ollama"** button in the "Ollama isn't running" banner, opening ollama.com/download.
+- 🔤 **Digits:** Western 123 by default in the Arabic UI, with a setting for Arabic-Indic ١٢٣; number fields accept both.
+- 🆘 **Support** section in Settings: support@fastkiwi.app, the support page and the open-source licences.
+- 📜 **Third-party notices:** `THIRD-PARTY-NOTICES.txt`, generated from `Cargo.lock` by `tools/make_notices.py`, embedded in the exe; CI checks it is current and every licence is on the allowlist.
+- 🪛 Empty-field placeholders in the Arabic UI keep their "…" at the end of the sentence.
 
 ### Security
 - الخادم المحلي يرفض الطلبات القادمة من مواقع أخرى عبر ترويسة `Sec-Fetch-Site` (مثل `<img>` أو `<script>` من صفحة ويب)، ويضيف `Cross-Origin-Resource-Policy: same-origin` و`X-Content-Type-Options: nosniff` لكل الردود.
