@@ -12,6 +12,7 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 - 🆘 **الدعم:** قسم «الدعم» في الإعدادات فيه بريد support@fastkiwi.app وصفحة الدعم، و«تراخيص البرامج مفتوحة المصدر».
 - 📜 **إشعارات الطرف الثالث:** ملف `THIRD-PARTY-NOTICES.txt` يُولَّد من `Cargo.lock` (`tools/make_notices.py`) ومضمّن في البرنامج، ويتحقق CI من أنه محدَّث وأن كل التراخيص مسموحة.
 - 🪛 علامة «…» في نصوص الحقول الفارغة صارت في نهاية الجملة العربية لا في بدايتها.
+- 🧩 **يعمل دون Visual C++ Runtime:** صار البرنامج يعمل على أي ويندوز 10/11 دون تثبيت حزمة Microsoft Visual C++ (كان الإصدار 2.2.0 لا يفتح على الأجهزة التي تخلو منها). ويتحقق CI من أن الملف لا يعتمد إلا على مكتبات ويندوز نفسها.
 
 ### English
 - 🧯 **Crash log:** panics are recorded to `crash.txt` in the data folder; the next start shows a one-line notice with an "Open folder" button.
@@ -21,6 +22,7 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 - 🆘 **Support** section in Settings: support@fastkiwi.app, the support page and the open-source licences.
 - 📜 **Third-party notices:** `THIRD-PARTY-NOTICES.txt`, generated from `Cargo.lock` by `tools/make_notices.py`, embedded in the exe; CI checks it is current and every licence is on the allowlist.
 - 🪛 Empty-field placeholders in the Arabic UI keep their "…" at the end of the sentence.
+- 🧩 **Runs without the Visual C++ runtime:** the exe now links the C runtime statically, so it starts on Windows 10/11 PCs without the Visual C++ Redistributable (2.2.0 needed VCRUNTIME140.dll). CI fails if the exe imports any DLL that is not part of Windows (`tools/check_imports.py`).
 
 ### Security
 - الخادم المحلي يرفض الطلبات القادمة من مواقع أخرى عبر ترويسة `Sec-Fetch-Site` (مثل `<img>` أو `<script>` من صفحة ويب)، ويضيف `Cross-Origin-Resource-Policy: same-origin` و`X-Content-Type-Options: nosniff` لكل الردود.
