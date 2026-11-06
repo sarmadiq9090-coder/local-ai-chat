@@ -1,7 +1,50 @@
 # خارطة التحسينات — Lemon
 
-**الإصدار الحالي:** 2.2.0 (Rust + WebView2)
-**الهدف:** برنامج ويندوز محلي للمحادثة وبرمجة التطبيقات والألعاب، يقترب في تجربته من Claude و ChatGPT.
+**الإصدار الحالي:** 2.2.0 (Rust + WebView2) · **القادم:** 2.3.0 موقّع (قطار 13 نوفمبر 2026)
+**الحالة: صيانة فقط.** لا ميزات جديدة، لأن Ollama يوفّر تطبيقه الخاص ولا ميزة تنفرد بها Lemon. نكمل توقيع التحديثات وسجل الانهيارات، ونصلح الأخطاء، ونرد على البلاغات خلال أسبوعين.
+الخطة العامة لكل البرامج في [صفحة الحساب](https://github.com/sarmadiq9090-coder/sarmadiq9090-coder/blob/main/ROADMAP.md). وموعد كل تغيير يحدّده [معلَم قطار الجمعة](https://github.com/sarmadiq9090-coder/local-ai-chat/milestones) (`train-YYYY-MM-DD`، الساعة 09:00 بتوقيت بغداد). لا يصدر أكثر من إصدار واحد في الأسبوع.
+
+## الخطة الحالية (من نوفمبر 2026)
+
+### المرحلة 1: الأساس (6 و13 نوفمبر)
+- [ ] **قطار 13 نوفمبر، الإصدار 2.3.0 الموقّع.** ترتيب الدمج: [#2](https://github.com/sarmadiq9090-coder/local-ai-chat/pull/2) (`CLAUDE.md`)، ثم [#3](https://github.com/sarmadiq9090-coder/local-ai-chat/pull/3) (تحديثات موقّعة بـ minisign، وهو البند 4.7)، ثم [#4](https://github.com/sarmadiq9090-coder/local-ai-chat/pull/4) (سجل الانهيارات `crash.txt`، وهو البند 1.7). لا يصدر قبل نجاح التشغيل التجريبي (dry run).
+- [ ] **على المالك قبل 13 نوفمبر:** بيئة `release` بموافقته، ومفاتيح minisign من Codespace (الخطوات في `RELEASING.md` التي تأتي مع #3). إذا لم تجهز المفاتيح ينتقل الإصدار إلى قطار 20 نوفمبر.
+- [ ] قسم Lemon في صفحة الخصوصية الموحّدة على fastkiwi.app.
+
+### المرحلة 2: الثقة (من 20 نوفمبر إلى 11 ديسمبر)
+- [ ] winget: لا نلمس طلب 2.2.0 المقبول، ونؤتمت التحديثات (wingetcreate) بعد دمجه.
+- [ ] اختياري: إبلاغ Microsoft (WDSI) بأن تحذير Defender على البرنامج إنذار خاطئ.
+
+### خارج الخطة
+ميزات جديدة (كل بنود المراحل 1 إلى 5 أدناه مجمّدة)، والمتجر، والشهادات المدفوعة.
+
+### قائمة فحص الإصدار والتراجع
+بعد دمج #3، الخطوات الكاملة في [RELEASING.md](RELEASING.md). هنا ملخّصها، وخطة التراجع غير الموجودة هناك:
+1. **CI ناجح** على `main`.
+2. **رقم الإصدار وCHANGELOG يوم الجمعة فقط:** `version` في `Cargo.toml` و`CHANGELOG.md`.
+3. **التشغيل التجريبي:** **Actions ← Release ← Run workflow**. يبني البرنامج ويوقّعه بمفتاح مؤقت، ولا ينشر شيئًا.
+4. **قائمة الملفات:** بالضبط `local-ai-chat.exe` و`local-ai-chat.exe.sha256` و`local-ai-chat.exe.minisig`، والإصدار «Latest» وليس مسودة.
+5. **نسخة محدَّثة واحدة:** على جهاز فيه الإصدار السابق: **الإعدادات ← التحديثات ← التحقق من التحديثات ← تحديث الآن**، ثم تأكّد من الرقم الجديد.
+
+**التراجع عن إصدار سيئ:**
+1. حوّل الإصدار السيئ إلى **مسودة**: `gh release edit vX.Y.Z --draft=true -R sarmadiq9090-coder/local-ai-chat`. بعدها لا يراه المحدِّث. إن رفض GitHub ذلك (مثلًا لإصدار غير قابل للتعديل)، فاجعله إصدارًا تجريبيًا (pre-release).
+2. أصلح المشكلة، وأصدر **x.y.z+1** (مثلًا 2.3.1). لا تُعِد استخدام الرقم، ولا تحذف الوسم.
+3. المحدِّث لا ينزل إلى إصدار أقدم أبدًا. من ثبّت الإصدار السيئ يبقى عليه حتى يصدر x.y.z+1.
+
+### English summary
+**Status: maintenance only.** No new features (Ollama ships its own app, so Lemon has no wedge). Bug fixes, crash reports answered within 2 weeks, at most one release a week, on the Friday trains (`train-YYYY-MM-DD` milestones, 09:00 Baghdad).
+- **Nov 13 train, 2.3.0 signed:** merge #2 (CLAUDE.md) → #3 (minisign signed updates) → #4 (crash log), gated on the Release dry run. The owner sets up the `release` environment and minisign keys first, or the release slips to Nov 20.
+- **Phase 2:** automate winget updates (wingetcreate) once the validated 2.2.0 PR merges. Optional: a WDSI false-positive submission.
+- **Release checklist:** CI green; version bump and CHANGELOG on Friday only; dry run (**Actions → Release → Run workflow**); assets exactly `local-ai-chat.exe`, `.sha256`, `.minisig`; one updated install. Details are in [RELEASING.md](RELEASING.md), which arrives with #3.
+- **Rollback:** turn the bad release back into a draft (`gh release edit vX.Y.Z --draft=true`), or mark it pre-release if GitHub refuses. Then ship x.y.z+1. Updaters never downgrade.
+
+---
+
+## السجل: الخطة السابقة (مجمّدة)
+
+ما يلي هو الخطة قبل نوفمبر 2026، ونبقيه للتاريخ. البنود غير المنجزة **لن تُنفّذ** ما دامت Lemon في وضع الصيانة.
+
+**الهدف السابق:** برنامج ويندوز محلي للمحادثة وبرمجة التطبيقات والألعاب، يقترب في تجربته من Claude و ChatGPT.
 
 **مفتاح الجدول:**
 - **الجهد:** 🟢 صغير (ساعات) · 🟡 متوسط (يوم أو يومان) · 🔴 كبير (عدة أيام)
@@ -105,6 +148,8 @@ timeline
 ---
 
 ## 🎯 الترتيب المقترح للخطوات القادمة (بعد 2.1)
+
+> مجمّد: Lemon في وضع الصيانة، فلن تُنفّذ هذه الخطوات. الخطة الحالية في أعلى الصفحة.
 
 1. **2.2** حفظ الكود في ملفات، ثم **2.4** قوالب التعليمات.
 2. **5.4** موديلات أقوى (`qwen3-coder:30b`، `gpt-oss:20b`): تحسّن جودة الردود أكثر من أي ميزة أخرى.

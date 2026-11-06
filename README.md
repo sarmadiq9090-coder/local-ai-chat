@@ -80,6 +80,7 @@ ROADMAP.md             قائمة التحسينات المنجزة والقاد
 | المحادثات | `%APPDATA%\LocalAiChat\conversations\*.json` |
 | الإعدادات | `%APPDATA%\LocalAiChat\settings.json` |
 | التصدير | `Documents\LocalAiChat\` |
+| سجل الأعطال (سبب أي توقّف مفاجئ، أرفقه عند الإبلاغ عن مشكلة) | `%APPDATA%\LocalAiChat\crash.txt` |
 
 ## كيف تضيف ميزة
 
