@@ -64,6 +64,8 @@ pub const MAX_SIG_BYTES: u64 = 4096;
 //     ];
 //
 // How the keys are made and where the secrets live: docs/specs/signing.md.
+// Commit keys/minisign-{primary,backup}.pub in the SAME change: the release
+// workflow signs only when they exist (test `keys_dir_matches_trusted_keys`).
 //
 // While this list is EMPTY, updates are verified with the sha256 file only (as
 // in 2.2.0 and earlier) and a log line says signature checking is not
@@ -1177,6 +1179,65 @@ mod tests {
         }
         #[cfg(not(feature = "dev-test-update-key"))]
         assert_eq!(trusted_keys(), TRUSTED_PUBLIC_KEYS);
+    }
+
+    /// The release workflow signs only when `keys/minisign-{primary,backup}.pub`
+    /// are committed. So: every committed key must be trusted by the app, and a
+    /// non-empty `TRUSTED_PUBLIC_KEYS` needs committed keys, or CI would publish
+    /// an unsigned release that these builds refuse. (Both empty = signing off.)
+    #[test]
+    fn keys_dir_matches_trusted_keys() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("keys");
+        let committed: Vec<String> = ["primary", "backup"]
+            .iter()
+            .filter_map(|k| std::fs::read_to_string(dir.join(format!("minisign-{k}.pub"))).ok())
+            .map(|f| pub_key_line(&f).to_string())
+            .collect();
+        for k in &committed {
+            assert!(
+                TRUSTED_PUBLIC_KEYS.iter().any(|t| t.trim() == k),
+                "keys/*.pub key {k:?} is not in update::TRUSTED_PUBLIC_KEYS"
+            );
+        }
+        assert_eq!(
+            committed.is_empty(),
+            TRUSTED_PUBLIC_KEYS.is_empty(),
+            "TRUSTED_PUBLIC_KEYS and keys/minisign-{{primary,backup}}.pub must be added together \
+             (docs/specs/signing.md)"
+        );
+    }
+
+    /// With an empty key list (the shipped state until the owner has keys) a
+    /// release is installed on its sha256 alone: a `.minisig` is neither
+    /// required nor downloaded, even a bad one, and a bad sha256 still fails.
+    #[tokio::test]
+    async fn empty_key_list_checks_sha256_only() {
+        let data = b"new exe bytes".to_vec();
+        let sha = format!("{}  local-ai-chat.exe\n", to_hex(&Sha256::digest(&data)));
+        let base = file_server(vec![
+            ("/exe", data.clone(), false),
+            ("/sha", sha.into_bytes(), false),
+            ("/bad.minisig", b"not a signature".to_vec(), false),
+            (
+                "/badsha",
+                format!("{}  x\n", "0".repeat(64)).into_bytes(),
+                false,
+            ),
+        ]);
+        let mut p = |_| {};
+        let mut r = release_at(&base, "/exe", "/sha");
+        assert!(r.sig_url.is_none());
+        assert_eq!(
+            download_verified(&r, &[], true, &mut p).await.unwrap(),
+            data
+        );
+        r.sig_url = Some(format!("{base}/bad.minisig"));
+        assert_eq!(
+            download_verified(&r, &[], true, &mut p).await.unwrap(),
+            data
+        );
+        let r = release_at(&base, "/exe", "/badsha");
+        assert!(download_verified(&r, &[], true, &mut p).await.is_err());
     }
 
     #[tokio::test]

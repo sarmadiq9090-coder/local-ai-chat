@@ -34,7 +34,13 @@ signed exe cannot be replayed as a newer version.
 Downgrades are not offered: the updater only installs a strictly newer version.
 
 **Transition.** The key list ships **empty**. Builds with an empty list behave
-exactly like 2.2.0 (sha256 only) and log `signature checking is not configured`.
+exactly like 2.2.0 (sha256 only) and log `signature checking is not configured`:
+a `.minisig` on the release is neither required nor downloaded (unit test
+`empty_key_list_checks_sha256_only`). The release workflow then ships unsigned
+releases (2 assets) with a warning, and does not need the secrets.
+`TRUSTED_PUBLIC_KEYS` and `keys/minisign-{primary,backup}.pub` must be added in the
+same PR: unit test `keys_dir_matches_trusted_keys` fails if one is set without
+the other, or if a committed key is not trusted by the app.
 Once the owner has keys, a follow-up PR pastes them in. Every build after that
 **requires** a valid signature. The switch is compile-time only: there is no
 setting, env var or server flag that skips the check. Clients on 2.2.0 or older,
@@ -77,8 +83,8 @@ and `.github/dependabot.yml` bumps them weekly.
 | Job | Runs on | Token / secrets | Does |
 |---|---|---|---|
 | `build` | windows | `contents: read`, no secrets, no cache, checkout with `persist-credentials: false` | Checks that the tag is `v<Cargo version>` with no leading zeros and no `+build`. Runs the tests and `--release --locked` build, writes `.sha256` and the tag-message notes, and uploads artifact `release-dist`. |
-| `sign` | ubuntu | Environment **`release`** (owner approval, `v*` only). `MINISIGN_SECRET_KEY`, `MINISIGN_PASSWORD`. `contents: read` | Runs **no repository code**. It downloads the artifact, checks the sha256, and installs minisign 0.12 from the pinned release URL with a pinned sha256. It fetches `keys/minisign-{primary,backup}.pub` at the tag commit through the API, then runs `minisign -S -t "local-ai-chat <tag>"`. It checks the result with `minisign -Vm` against the committed public keys, including the exact trusted comment, and uploads artifact `release-sig`. It fails if the secret or the public keys are missing. |
-| `publish` | ubuntu | `contents: write`, `id-token: write`, `attestations: write` | Checks the sha256 and that all 3 files exist, then runs `actions/attest-build-provenance` on the exe. Runs `gh release create --draft --verify-tag` with `local-ai-chat.exe`, `local-ai-chat.exe.sha256` and `local-ai-chat.exe.minisig`. Checks that the draft has exactly those 3 non-empty assets, then `gh release edit --draft=false`. |
+| `sign` | ubuntu | Environment **`release`** (owner approval, `v*` only). `MINISIGN_SECRET_KEY`, `MINISIGN_PASSWORD`. `contents: read` | Runs **no repository code**. It downloads the artifact, checks the sha256, and installs minisign 0.12 from the pinned release URL with a pinned sha256. It fetches `keys/minisign-{primary,backup}.pub` at the tag commit through the API, then runs `minisign -S -t "local-ai-chat <tag>"`. It checks the result with `minisign -Vm` against the committed public keys, including the exact trusted comment, and uploads artifact `release-sig`. **Signing is on** iff `keys/*.pub` exist at the tag commit (an API error other than 404 fails the job). On: a missing `MINISIGN_SECRET_KEY` fails the job. Off: it warns, skips minisign entirely and outputs `signed=false`. |
+| `publish` | ubuntu | `contents: write`, `id-token: write`, `attestations: write` | Checks the sha256 and that the expected files exist (3 when `signed`, else the exe and `.sha256` and no `.minisig`), then runs `actions/attest-build-provenance` on the exe. Runs `gh release create --draft --verify-tag` with those files. Checks that the draft has exactly those non-empty assets, then `gh release edit --draft=false`. |
 | `dry-run` | windows | `contents: read`, no secrets | Runs only on manual **Run workflow** (`workflow_dispatch`). It makes a throwaway key, signs the built exe with `local-ai-chat v<version>`, and verifies it with `minisign -Vm`. It also runs the app's verifier (`cargo test ci_dry_run_signature -- --ignored`). It never creates a release. |
 
 Draft safety: `releases/latest` never returns drafts, and 2.2.0 clients reject
@@ -103,12 +109,14 @@ short:
    `MINISIGN_SECRET_KEY`, and its password into `MINISIGN_PASSWORD`.
 4. Put the backup secret key file content and its password into the owner's
    (cloud) password manager. They go nowhere else.
-5. Commit `keys/minisign-primary.pub` and `keys/minisign-backup.pub`, and send
-   both to us. A follow-up PR pastes them into `TRUSTED_PUBLIC_KEYS`.
+5. Send both `.pub` files to us. One follow-up PR commits
+   `keys/minisign-primary.pub` and `keys/minisign-backup.pub` and pastes them into
+   `TRUSTED_PUBLIC_KEYS` (the unit test requires both together).
 6. Delete the secret files and the Codespace.
 
-The release workflow needs steps 1 to 5 done before it can publish. Without them,
-`sign` fails with a pointer to this file.
+Until that follow-up PR is merged, releases are published unsigned (with a
+warning). After it, `sign` fails with a pointer to this file if the secret is
+missing, so no unsigned release can reach clients that require a signature.
 
 ## Rotation and loss
 
