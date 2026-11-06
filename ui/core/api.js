@@ -57,7 +57,7 @@ async function* streamPost(path, body, signal) {
   const res = await fetch(path, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body), signal });
   if (!res.ok) throw await httpError(res);
   for await (const obj of readNdjson(res)) {
-    if (obj && obj.error) throw new Error(obj.error);
+    if (obj && obj.error) throw Object.assign(new Error(obj.error), obj.code ? { code: obj.code } : {});
     yield obj;
   }
 }

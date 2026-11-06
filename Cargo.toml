@@ -17,6 +17,7 @@ axum = { version = "0.8.9", features = ["multipart"] }
 dirs = "7.0.0"
 futures-util = "0.3.34"
 mime_guess = "2.0.5"
+minisign-verify = "0.3.0"
 pdf-extract = "0.12.1"
 reqwest = { version = "0.13.5", default-features = false, features = ["stream", "json", "rustls"] }
 rust-embed = "8.13.0"
@@ -28,6 +29,12 @@ tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "s
 unicode-normalization = "0.1.26"
 uuid = { version = "1.29.0", features = ["v4"] }
 wry = "0.57.1"
+
+[features]
+# Debug builds only (a release build refuses to compile with it): trust the
+# TEST-ONLY minisign key from tests/fixtures/update-signing instead of the
+# production keys, for local end-to-end runs of the updater. See src/update.rs.
+dev-test-update-key = []
 
 [profile.release]
 opt-level = 3
