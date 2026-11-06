@@ -81,14 +81,18 @@ jobs:
     name: ar/en string parity (ui/**/strings.js)
     # tests/i18n_parity.rs: same keys in ar and en, no empty values, same {placeholders}.
     # Also part of `cargo test` in the build job; this job reports it on its own.
+    # The test uses only std, so it is compiled alone with rustc (building the crate
+    # on Linux would need the GTK/WebKit dev packages).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - run: cargo test --locked --test i18n_parity
+      - name: Build and run tests/i18n_parity.rs
+        run: |
+          CARGO_MANIFEST_DIR="$PWD" rustc --edition 2024 --test tests/i18n_parity.rs -o "$RUNNER_TEMP/i18n_parity"
+          "$RUNNER_TEMP/i18n_parity"
 
   build:
     name: test + release build
