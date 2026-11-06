@@ -25,9 +25,13 @@ name: Release
 #            Runs NO repository code: downloads the build artifact, installs a
 #            pinned + checksummed minisign, signs, and verifies against the
 #            committed public keys.
+#            Signing is ON once keys/minisign-{primary,backup}.pub are committed;
+#            then a missing secret fails the release. With no committed keys
+#            (the app's TRUSTED_PUBLIC_KEYS is empty too, a unit test ties them)
+#            it warns and skips: the release ships without a .minisig, as 2.2.0.
 #   publish  contents/attestations write: attests, creates a DRAFT release with the
-#            3 assets (and the tag, at this commit), checks they are all there,
-#            then publishes it.
+#            assets (3 when signed, 2 when signing is off; and the tag, at this
+#            commit), checks they are all there, then publishes it.
 #   dry-run  (manual "Run workflow" only) signs with a throwaway key made in the
 #            job and verifies it with minisign AND the app's Rust verifier. No
 #            secrets, no release.
@@ -201,6 +205,8 @@ jobs:
     environment: release
     permissions:
       contents: read # read the committed public keys through the API
+    outputs:
+      signed: ${{ steps.keys.outputs.configured }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -211,7 +217,47 @@ jobs:
         working-directory: dist
         run: sha256sum -c local-ai-chat.exe.sha256
 
+      - name: Fetch the committed public keys
+        id: keys
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HAS_SECRET: ${{ secrets.MINISIGN_SECRET_KEY != '' }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/pub"
+          for k in primary backup; do
+            if ! gh api -H "Accept: application/vnd.github.raw" \
+              "repos/${GITHUB_REPOSITORY}/contents/keys/minisign-${k}.pub?ref=${GITHUB_SHA}" \
+              > "$RUNNER_TEMP/pub/${k}.pub" 2> "$RUNNER_TEMP/gh.err"; then
+              rm -f "$RUNNER_TEMP/pub/${k}.pub"
+              # Only "not committed" (404) may count as "signing is off"; any other
+              # API error must not silently turn into an unsigned release.
+              if ! grep -q 'HTTP 404' "$RUNNER_TEMP/gh.err"; then
+                cat "$RUNNER_TEMP/gh.err"
+                echo "::error::Could not read keys/minisign-${k}.pub through the API"
+                exit 1
+              fi
+            fi
+          done
+          if ls "$RUNNER_TEMP"/pub/*.pub >/dev/null 2>&1; then
+            # Signing is configured: from here on a missing secret is an error.
+            if [ "${HAS_SECRET}" != "true" ]; then
+              echo "::error::keys/*.pub are committed but the release Environment has no MINISIGN_SECRET_KEY secret. Apps with these keys would refuse an unsigned update. Set up signing: docs/specs/signing.md"
+              exit 1
+            fi
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            # Not configured yet (update::TRUSTED_PUBLIC_KEYS is empty, see the
+            # unit test keys_dir_matches_trusted_keys): ship without a signature.
+            if [ "${HAS_SECRET}" = "true" ]; then
+              echo "::warning::MINISIGN_SECRET_KEY is set but keys/minisign-*.pub are not committed yet, so this release is NOT signed. Commit the public keys to turn signing on: docs/specs/signing.md"
+            else
+              echo "::warning::Signing is not set up (no keys/minisign-*.pub, no MINISIGN_SECRET_KEY): this release is NOT signed and apps check its sha256 only, as in 2.2.0. docs/specs/signing.md"
+            fi
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install minisign (pinned, checksum-verified)
+        if: steps.keys.outputs.configured == 'true'
         run: |
           cd "$RUNNER_TEMP"
           curl -sSfL -o minisign.tar.gz "$MINISIGN_LINUX_URL"
@@ -219,31 +265,13 @@ jobs:
           tar xzf minisign.tar.gz minisign-linux/x86_64/minisign
           echo "$RUNNER_TEMP/minisign-linux/x86_64" >> "$GITHUB_PATH"
 
-      - name: Fetch the committed public keys
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/pub"
-          for k in primary backup; do
-            gh api -H "Accept: application/vnd.github.raw" \
-              "repos/${GITHUB_REPOSITORY}/contents/keys/minisign-${k}.pub?ref=${GITHUB_SHA}" \
-              > "$RUNNER_TEMP/pub/${k}.pub" || rm -f "$RUNNER_TEMP/pub/${k}.pub"
-          done
-          if ! ls "$RUNNER_TEMP"/pub/*.pub >/dev/null 2>&1; then
-            echo "::error::No keys/minisign-primary.pub or keys/minisign-backup.pub in the repo. Set up signing first: docs/specs/signing.md"
-            exit 1
-          fi
-
       - name: Sign
+        if: steps.keys.outputs.configured == 'true'
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
           MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
           TAG: ${{ needs.version.outputs.tag }}
         run: |
-          if [ -z "${MINISIGN_SECRET_KEY}" ]; then
-            echo "::error::The release Environment has no MINISIGN_SECRET_KEY secret. Set up signing first: docs/specs/signing.md"
-            exit 1
-          fi
           umask 077
           key="$RUNNER_TEMP/minisign.key"
           trap 'rm -f "$key"' EXIT
@@ -252,6 +280,7 @@ jobs:
             minisign -S -s "$key" -m dist/local-ai-chat.exe -t "local-ai-chat ${TAG}"
 
       - name: Verify the signature against the committed public keys
+        if: steps.keys.outputs.configured == 'true'
         env:
           TAG: ${{ needs.version.outputs.tag }}
         run: |
@@ -271,6 +300,7 @@ jobs:
           exit 1
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.keys.outputs.configured == 'true'
         with:
           name: release-sig
           path: dist/local-ai-chat.exe.minisig
@@ -293,12 +323,22 @@ jobs:
           path: dist
 
       - name: Check the assets
+        id: assets
         working-directory: dist
+        env:
+          SIGNED: ${{ needs.sign.outputs.signed }}
         run: |
           sha256sum -c local-ai-chat.exe.sha256
-          for f in local-ai-chat.exe local-ai-chat.exe.sha256 local-ai-chat.exe.minisig; do
+          files="local-ai-chat.exe local-ai-chat.exe.sha256"
+          if [ "${SIGNED}" = "true" ]; then
+            files="$files local-ai-chat.exe.minisig"
+          elif [ -e local-ai-chat.exe.minisig ]; then
+            echo "::error::unexpected local-ai-chat.exe.minisig while signing is off"; exit 1
+          fi
+          for f in $files; do
             [ -s "$f" ] || { echo "::error::missing $f"; exit 1; }
           done
+          echo "files=$files" >> "$GITHUB_OUTPUT"
 
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
@@ -320,6 +360,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.version.outputs.tag }}
+          FILES: ${{ steps.assets.outputs.files }}
         run: |
           args=(--repo "$GITHUB_REPOSITORY" --draft --title "$TAG")
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
@@ -334,17 +375,18 @@ jobs:
             args+=(--generate-notes)
           fi
           case "$TAG" in *-*) args+=(--prerelease) ;; esac
-          gh release create "$TAG" "${args[@]}" \
-            dist/local-ai-chat.exe dist/local-ai-chat.exe.sha256 dist/local-ai-chat.exe.minisig
+          read -ra files <<< "$FILES"
+          gh release create "$TAG" "${args[@]}" "${files[@]/#/dist/}"
 
-      - name: Check all 3 assets are on the draft
+      - name: Check all assets are on the draft
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.version.outputs.tag }}
+          FILES: ${{ steps.assets.outputs.files }}
         run: |
           names=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
             --jq '[.assets[] | select(.size > 0) | .name] | sort | join(",")')
-          expected="local-ai-chat.exe,local-ai-chat.exe.minisig,local-ai-chat.exe.sha256"
+          expected=$(printf '%s\n' $FILES | LC_ALL=C sort | paste -sd, -)
           if [ "$names" != "$expected" ]; then
             echo "::error::Draft assets are '$names', expected '$expected'. The draft was left unpublished."
             exit 1

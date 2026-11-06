@@ -147,6 +147,7 @@ cargo clippy           # lints
 | Assistants + knowledge | `%APPDATA%\LocalAiChat\assistants\` |
 | WebView2 profile / cache | `%LOCALAPPDATA%\LocalAiChat\webview\` |
 | Exports | `Documents\LocalAiChat\` |
+| Crash log (why the app last closed unexpectedly; attach it to bug reports) | `%APPDATA%\LocalAiChat\crash.txt` |
 | Models | Managed by Ollama (default `%USERPROFILE%\.ollama\models`) |
 
 To reset the app, close it and delete the `LocalAiChat` folders above. Your

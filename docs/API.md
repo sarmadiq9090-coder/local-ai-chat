@@ -4,7 +4,7 @@ All endpoints are served by the Rust backend on the same origin as the UI (`http
 JSON in / JSON out unless noted. Errors: non-2xx status with body `{"error": "message"}` — including
 request rejections under `/api/app` (malformed JSON → 400, wrong field types → 422, missing
 `Content-Type` → 415, bad path/query → 400, body over 64 MB → 413, wrong method → 405, unknown
-`/api/...` route → 404), the request guard's 403 (foreign `Host`/`Origin`), and a 413 for an oversized
+`/api/...` route → 404), the request guard's 403 (foreign `Host`/`Origin`, or a `Sec-Fetch-Site` other than `same-origin`/`none`), and a 413 for an oversized
 body on `/api/ollama/*`. Some errors add a machine-readable `"code"` (and a technical `"detail"`) so the
 UI can show a localized message: `ollama_unreachable` (502), `corrupt` (500), `invalid_ollama_url` (400).
 
@@ -216,6 +216,19 @@ type UpdateCheck = {
   just_updated?: string;      // set once after a restart into a new version (from --after-update)
 };
 ```
+
+## Crash notice — `/api/app/crash...`
+
+Implemented in `src/server/routes/crash.rs` + `src/crash_log.rs`. A panic hook (installed first thing in
+`main`) appends an entry (UTC time, version, thread, message, location, backtrace) to
+`<data dir>\crash.txt`, keeping the newest ~64 KB of whole entries. `crash.seen` beside it marks the
+last time the UI showed the notice.
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/api/app/crash` | – | `{ "new": bool, "path": string }` — `new`: `crash.txt` is newer than `crash.seen` (or exists without it) |
+| POST | `/api/app/crash/seen` | – | `{ "ok": bool }` — touches `crash.seen` |
+| POST | `/api/app/crash/open` | – | `{ "ok": bool }` — opens Explorer with `crash.txt` selected |
 
 ## Static UI (everything else)
 

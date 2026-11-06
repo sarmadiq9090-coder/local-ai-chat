@@ -5,14 +5,20 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 ## [Unreleased]
 
 ### العربية
+- 🧯 **سجل الأعطال:** عند توقّف Lemon بشكل غير متوقع يُحفظ السبب في `crash.txt` داخل مجلد البيانات، ويظهر تنبيه في التشغيل التالي مع زر لفتح المجلد.
 - 🔏 **تحديثات موقّعة:** صار المحدِّث قادرًا على التحقق من توقيع minisign لكل تحديث (`local-ai-chat.exe.minisig`) بمفاتيح مضمّنة في البرنامج، ويجب أن يطابق التوقيع رقم الإصدار نفسه. عند إضافة المفاتيح يُرفض أي تحديث بلا توقيع صالح، وتظهر رسالة واضحة مع رابط للتنزيل اليدوي. ما دامت قائمة المفاتيح فارغة يبقى السلوك كما هو (التحقق بـ sha256 فقط).
 - 🛡️ **إصدار أكثر أمانًا على GitHub:** تثبيت كل الإجراءات (actions) على commit محدد، وصلاحيات قراءة فقط افتراضيًا، والتوقيع يجري في بيئة `release` بعد موافقة المالك، مع شهادة مصدر البناء (attestation)، وإنشاء الإصدار كمسودة لا تُنشر إلا بعد التأكد من وجود الملفات الثلاثة. أُضيف Dependabot. دليل المالك: `RELEASING.md`.
 - 🚂 **إصدار بلا وسوم يدوية:** يكفي دمج طلب يرفع رقم الإصدار في `Cargo.toml`؛ يبني GitHub البرنامج وينتظر موافقة المالك ثم ينشئ الوسم والإصدار بنفسه. الدمج بلا تغيير في الرقم لا ينشر شيئًا.
 
 ### English
+- 🧯 **Crash log:** panics are recorded to `crash.txt` in the data folder; the next start shows a one-line notice with an "Open folder" button.
 - 🔏 **Signed updates:** the updater can verify a minisign signature (`local-ai-chat.exe.minisig`) by compiled-in keys, with the trusted comment bound to the exact version (`local-ai-chat vX.Y.Z`). Once keys are compiled in, unsigned or badly signed updates are refused with a clear message and a manual-download link. With the key list still empty, behavior is unchanged (sha256 only). Spec: `docs/specs/signing.md`.
 - 🛡️ **Hardened release workflow:** SHA-pinned actions, read-only default token, no credentials persisted and no build cache. Signing runs in the owner-approved `release` Environment. Releases get a build-provenance attestation and are published only after a draft holding all three assets is checked. Also: Dependabot for actions and cargo, and a `workflow_dispatch` dry run.
 - 🚂 **Release on version bump:** merging a PR that bumps the `Cargo.toml` version releases it (after owner approval); CI creates the `v<version>` tag itself, with notes from `CHANGELOG.md`. Merges with an unchanged version only run a quick version check.
+
+### Security
+- الخادم المحلي يرفض الطلبات القادمة من مواقع أخرى عبر ترويسة `Sec-Fetch-Site` (مثل `<img>` أو `<script>` من صفحة ويب)، ويضيف `Cross-Origin-Resource-Policy: same-origin` و`X-Content-Type-Options: nosniff` لكل الردود.
+- The local server now rejects cross-site browser requests via `Sec-Fetch-Site` (e.g. an `<img>`/`<script>` GET from a web page, which carries no `Origin`), and adds `Cross-Origin-Resource-Policy: same-origin` and `X-Content-Type-Options: nosniff` to every response.
 
 ## [2.2.0] — 2026-10-30
 
