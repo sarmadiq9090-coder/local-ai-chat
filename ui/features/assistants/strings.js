@@ -252,6 +252,7 @@ export default {
     asst_noteText: "Text",
     asst_noteTextPh: "Write facts or Q&A here…",
     asst_noDocs: "No knowledge yet.",
+    asst_chunks_zero: "No chunks",
     asst_chunks_one: "{n} chunk",
     asst_chunks_other: "{n} chunks",
     asst_kindNote: "Note",
