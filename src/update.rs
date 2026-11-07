@@ -1,9 +1,11 @@
-//! Auto-update from GitHub Releases (spec: `docs/specs/auto-update.md`).
+//! Auto-update (specs: `docs/specs/auto-update.md`, `docs/specs/update-manifest.md`).
 //!
-//! - `fetch_latest()` asks GitHub for the latest release of [`REPO`] (a
+//! - `fetch_latest()` asks the signed update manifest on Cloudflare first
+//!   ([`MANIFEST_URL`]) and GitHub Releases of [`REPO`] as the fallback (a
 //!   [`ServerUnreachable`] error when GitHub refuses or finds no release / no
-//!   repo); `is_newer()` compares it to this build.
-//! - `install()` downloads the `local-ai-chat.exe` asset, verifies it against the
+//!   repo); `is_newer()` compares it to this build. See [`resolve`].
+//! - `install()` downloads the `local-ai-chat.exe` asset from each address in
+//!   order (the mirror first), verifies it against the manifest's SHA-256 or the
 //!   `local-ai-chat.exe.sha256` asset and — once [`TRUSTED_PUBLIC_KEYS`] is not
 //!   empty — against the minisign signature `local-ai-chat.exe.minisig`
 //!   (spec: `docs/specs/signing.md`), swaps it in place of the running exe
@@ -13,9 +15,11 @@
 //! - `request_exit()` asks the app to quit (the window installs a handler; in
 //!   `--serve` mode the process just exits).
 //!
-//! Dev override: if `LOCALAI_UPDATE_FEED=<url>` is set, that URL is used instead of
-//! the GitHub API (it must return JSON shaped like a GitHub release). The
-//! signature rules are exactly the same with or without the override.
+//! Dev overrides: if `LOCALAI_UPDATE_FEED=<url>` is set, that URL is used instead of
+//! the GitHub API (it must return JSON shaped like a GitHub release) and the
+//! manifest is not asked unless `LOCALAI_UPDATE_MANIFEST=<url>` is set too
+//! (`off` turns the manifest off). The signature rules are exactly the same
+//! with or without the overrides.
 
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
@@ -44,6 +48,18 @@ const STAGED_EXE_NAME: &str = "local-ai-chat.new.exe";
 pub const AFTER_UPDATE_ARG: &str = "--after-update";
 /// Dev/test override for the release feed URL.
 const FEED_ENV: &str = "LOCALAI_UPDATE_FEED";
+/// Dev/test override for the update manifest URL (`off`: do not ask it).
+const MANIFEST_ENV: &str = "LOCALAI_UPDATE_MANIFEST";
+/// The signed update manifest on Cloudflare, asked before GitHub so updates
+/// keep working while GitHub is down (`docs/specs/update-manifest.md`). Its
+/// signature is `<this>.minisig`.
+pub const MANIFEST_URL: &str = "https://updates.fastkiwi.app/local-ai-chat/latest.json";
+/// The manifest's `app`.
+pub const MANIFEST_APP: &str = "local-ai-chat";
+/// This exe's key in the manifest's `assets` (Lemon ships x64 only).
+const MANIFEST_ARCH: &str = "x64";
+/// Largest manifest we are willing to download (64 KB; a real one is ~1 KB).
+pub const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
 /// Largest executable we are willing to download (200 MB).
 pub const MAX_EXE_BYTES: u64 = 200 * 1024 * 1024;
 /// Largest `.sha256` file we are willing to download (1 KB).
@@ -201,12 +217,19 @@ pub struct ReleaseInfo {
     pub version: String,
     pub notes: String,
     pub published_at: Option<String>,
-    pub asset_url: String,
-    pub sha_url: String,
-    /// `local-ai-chat.exe.minisig`, if the release has one. Optional here so the
-    /// check still reports the new version; [`install`] refuses an update without
-    /// it once [`TRUSTED_PUBLIC_KEYS`] is not empty.
-    pub sig_url: Option<String>,
+    /// Where `local-ai-chat.exe` can be downloaded, tried in order (the
+    /// Cloudflare mirror first for a release from the manifest, then GitHub).
+    pub asset_urls: Vec<String>,
+    /// GitHub's `local-ai-chat.exe.sha256` asset. `None` when [`Self::sha256`]
+    /// comes from the manifest.
+    pub sha_url: Option<String>,
+    /// The expected SHA-256 of the exe, from the manifest.
+    pub sha256: Option<[u8; 32]>,
+    /// `local-ai-chat.exe.minisig` next to each download address, tried in order;
+    /// empty if the release has none. Optional here so the check still reports
+    /// the new version; [`install`] refuses an update without it once
+    /// [`TRUSTED_PUBLIC_KEYS`] is not empty.
+    pub sig_urls: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -255,15 +278,246 @@ pub fn parse_release(json: &[u8]) -> anyhow::Result<ReleaseInfo> {
         version,
         notes: r.body.unwrap_or_default(),
         published_at: r.published_at,
-        asset_url,
-        sha_url,
-        sig_url,
+        asset_urls: vec![asset_url],
+        sha_url: Some(sha_url),
+        sha256: None,
+        sig_urls: sig_url.into_iter().collect(),
     })
 }
 
-/// The dev feed override is active (`LOCALAI_UPDATE_FEED` set and non-empty).
+// ---------------------------------------------------------------- manifest
+
+#[derive(Deserialize)]
+struct Manifest {
+    schema: u32,
+    app: String,
+    version: String,
+    tag: String,
+    #[serde(default)]
+    released: Option<String>,
+    #[serde(default)]
+    notes: String,
+    assets: std::collections::HashMap<String, ManifestAsset>,
+}
+
+#[derive(Deserialize)]
+struct ManifestAsset {
+    name: String,
+    size: u64,
+    sha256: String,
+    urls: Vec<String>,
+}
+
+/// Parse the update manifest (`docs/specs/update-manifest.md`) into a release,
+/// whatever its version. Download addresses that are not `https://` (see
+/// [`check_download_url`]) or that name another file are dropped; at least one
+/// must remain.
+pub fn parse_manifest(json: &[u8], allow_local_http: bool) -> anyhow::Result<ReleaseInfo> {
+    if json.len() as u64 > MAX_MANIFEST_BYTES {
+        bail!("the update manifest is too large");
+    }
+    let m: Manifest = serde_json::from_slice(json).context("invalid update manifest")?;
+    if m.schema != 1 {
+        bail!("unknown update manifest schema {}", m.schema);
+    }
+    if m.app != MANIFEST_APP {
+        bail!("the update manifest is for {:?}", m.app);
+    }
+    let v = Version::parse(&m.version).filter(|v| v.pre.is_empty());
+    let normalized = v.map(|v| format!("{}.{}.{}", v.major, v.minor, v.patch));
+    if normalized.as_deref() != Some(m.version.as_str()) || m.tag != format!("v{}", m.version) {
+        bail!(
+            "bad version {:?} / tag {:?} in the update manifest",
+            m.version,
+            m.tag
+        );
+    }
+    let a = m
+        .assets
+        .get(MANIFEST_ARCH)
+        .filter(|a| a.name == ASSET_NAME)
+        .with_context(|| format!("the update manifest has no {ASSET_NAME}"))?;
+    if a.size == 0 || a.size > MAX_EXE_BYTES {
+        bail!("bad size {} in the update manifest", a.size);
+    }
+    let sha256 = Some(a.sha256.as_str())
+        .filter(|h| h.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+        .and_then(parse_sha256_file)
+        .context("bad sha256 in the update manifest")?;
+    let asset_urls: Vec<String> = a
+        .urls
+        .iter()
+        .filter(|u| {
+            check_download_url(u, allow_local_http).is_ok()
+                && reqwest::Url::parse(u).is_ok_and(|p| {
+                    p.query().is_none()
+                        && p.fragment().is_none()
+                        && p.path_segments().and_then(|mut s| s.next_back()) == Some(ASSET_NAME)
+                })
+        })
+        .take(8)
+        .cloned()
+        .collect();
+    if asset_urls.is_empty() {
+        bail!("the update manifest has no usable download address");
+    }
+    Ok(ReleaseInfo {
+        sig_urls: asset_urls.iter().map(|u| format!("{u}.minisig")).collect(),
+        asset_urls,
+        sha_url: None,
+        sha256: Some(sha256),
+        version: m.version,
+        notes: m.notes,
+        published_at: m.released,
+    })
+}
+
+/// The trusted comment the manifest's signature must carry, e.g.
+/// `local-ai-chat update-manifest v2.3.0`. Unlike the exe's (`local-ai-chat v2.3.0`),
+/// so one signature can never stand in for the other.
+pub fn expected_manifest_comment(version: &str) -> String {
+    format!("{MANIFEST_APP} update-manifest v{version}")
+}
+
+/// The manifest URL to ask first, if any: [`MANIFEST_URL`], or the
+/// `LOCALAI_UPDATE_MANIFEST` override. With only the `LOCALAI_UPDATE_FEED`
+/// override set (local tests of the GitHub path), none.
+fn manifest_url() -> Option<String> {
+    match std::env::var(MANIFEST_ENV)
+        .ok()
+        .filter(|u| !u.trim().is_empty())
+    {
+        Some(u) if u.trim().eq_ignore_ascii_case("off") => None,
+        Some(u) => Some(u),
+        None if std::env::var(FEED_ENV).is_ok_and(|u| !u.trim().is_empty()) => None,
+        None => Some(MANIFEST_URL.to_string()),
+    }
+}
+
+/// GET a small file (status 200..299, at most `max` bytes).
+async fn get_small(
+    url: &str,
+    max: u64,
+    what: &str,
+    allow_local_http: bool,
+) -> anyhow::Result<Vec<u8>> {
+    check_download_url(url, allow_local_http)?;
+    let resp = http()
+        .get(url)
+        .timeout(Duration::from_secs(20))
+        .send()
+        .await
+        .with_context(|| format!("could not download the {what}"))?;
+    if !resp.status().is_success() {
+        bail!("the {what} server returned HTTP {}", resp.status().as_u16());
+    }
+    read_capped(resp, max, what, |_, _| {}).await
+}
+
+/// Download and parse the manifest at `url`; with `keys`, also download
+/// `<url>.minisig` and verify it (see [`verify_minisign`]).
+async fn fetch_manifest(
+    url: &str,
+    keys: &[&str],
+    allow_local_http: bool,
+) -> anyhow::Result<ReleaseInfo> {
+    let data = get_small(url, MAX_MANIFEST_BYTES, "update manifest", allow_local_http).await?;
+    let release = parse_manifest(&data, allow_local_http)?;
+    if !keys.is_empty() {
+        let sig = get_small(
+            &format!("{url}.minisig"),
+            MAX_SIG_BYTES,
+            "manifest signature",
+            allow_local_http,
+        )
+        .await
+        .map_err(|e| sig_error(format!("{e:#}")))?;
+        let sig = std::str::from_utf8(&sig)
+            .map_err(|_| sig_error("the manifest signature is not valid"))?;
+        verify_minisign(
+            &data,
+            sig,
+            &expected_manifest_comment(&release.version),
+            keys,
+        )?;
+    }
+    Ok(release)
+}
+
+/// The SHA-256 GitHub publishes for `release` (its `.sha256` asset).
+async fn github_sha256(release: &ReleaseInfo, allow_local_http: bool) -> Option<[u8; 32]> {
+    if release.sha256.is_some() {
+        return release.sha256;
+    }
+    let bytes = get_small(
+        release.sha_url.as_deref()?,
+        MAX_SHA_BYTES,
+        "checksum file",
+        allow_local_http,
+    )
+    .await
+    .ok()?;
+    parse_sha256_file(&String::from_utf8_lossy(&bytes))
+}
+
+/// The release to report (`docs/specs/update-manifest.md`):
+/// 1. Fetch the manifest; on any failure use the GitHub `feed`.
+/// 2. With `keys`, its signature must verify. Without keys (today), it is used
+///    only if GitHub reports the same version with the same SHA-256.
+/// 3. A trusted manifest newer than `current` is returned with its download
+///    addresses in order (mirror first). A trusted manifest that is not newer
+///    is returned (up to date) unless GitHub has a newer release (a stale
+///    mirror); a failed GitHub check then does not matter.
+///
+/// The caller offers only a strictly newer version ([`is_newer`]): never a downgrade.
+pub async fn resolve(
+    manifest: Option<&str>,
+    feed: &str,
+    keys: &[&str],
+    current: &str,
+    allow_local_http: bool,
+) -> anyhow::Result<ReleaseInfo> {
+    let manifest = match manifest {
+        Some(url) => fetch_manifest(url, keys, allow_local_http).await,
+        None => return fetch_github(feed).await,
+    };
+    let m = match manifest {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("update: manifest not used: {e:#}");
+            return fetch_github(feed).await;
+        }
+    };
+    if keys.is_empty() {
+        // No keys yet: trusted only when GitHub publishes the same exe.
+        let gh = fetch_github(feed).await;
+        if let Ok(g) = &gh
+            && g.version == m.version
+            && github_sha256(g, allow_local_http).await == m.sha256
+        {
+            return Ok(m);
+        }
+        eprintln!(
+            "update: manifest not used: GitHub does not confirm v{} with the same sha256",
+            m.version
+        );
+        return gh;
+    }
+    if is_newer(&m.version, current) {
+        return Ok(m);
+    }
+    match fetch_github(feed).await {
+        Ok(g) if is_newer(&g.version, current) && is_newer(&g.version, &m.version) => Ok(g),
+        _ => Ok(m),
+    }
+}
+
+/// A dev override is active (`LOCALAI_UPDATE_FEED` or `LOCALAI_UPDATE_MANIFEST`
+/// set and non-empty).
 fn dev_feed_active() -> bool {
-    std::env::var(FEED_ENV).is_ok_and(|u| !u.trim().is_empty())
+    [FEED_ENV, MANIFEST_ENV]
+        .iter()
+        .any(|k| std::env::var(k).is_ok_and(|u| !u.trim().is_empty()))
 }
 
 /// Download URLs must be `https://`. Plain `http://` is accepted only for
@@ -344,11 +598,25 @@ fn feed_status_error(status: u16) -> anyhow::Error {
     }
 }
 
-/// Fetch the latest release. `Err` = network/HTTP/parse problem (message is
-/// user-facing); [`ServerUnreachable`] when GitHub refuses or has no release.
+/// Fetch the latest release: the manifest first, GitHub as the fallback
+/// ([`resolve`]). `Err` = network/HTTP/parse problem (message is user-facing);
+/// [`ServerUnreachable`] when GitHub refuses or has no release.
 pub async fn fetch_latest() -> anyhow::Result<ReleaseInfo> {
+    let keys = trusted_keys();
+    resolve(
+        manifest_url().as_deref(),
+        &feed_url(),
+        &keys,
+        CURRENT_VERSION,
+        dev_feed_active(),
+    )
+    .await
+}
+
+/// Fetch the latest GitHub release from `feed`.
+async fn fetch_github(feed: &str) -> anyhow::Result<ReleaseInfo> {
     let resp = http()
-        .get(feed_url())
+        .get(feed)
         .header("Accept", "application/vnd.github+json")
         .timeout(Duration::from_secs(20))
         .send()
@@ -449,6 +717,17 @@ pub fn verify_signature(
     version: &str,
     keys: &[&str],
 ) -> anyhow::Result<()> {
+    verify_minisign(data, sig_text, &expected_trusted_comment(version), keys)
+}
+
+/// [`verify_signature`] for any trusted comment (`expected`); the manifest's is
+/// [`expected_manifest_comment`].
+pub fn verify_minisign(
+    data: &[u8],
+    sig_text: &str,
+    expected: &str,
+    keys: &[&str],
+) -> anyhow::Result<()> {
     let sig = minisign_verify::Signature::decode(sig_text.trim_start_matches('\u{feff}'))
         .map_err(|e| sig_error(format!("the signature file is not valid: {e}")))?;
     for key in keys {
@@ -457,7 +736,6 @@ pub fn verify_signature(
         };
         // `false`: legacy (non-pre-hashed) signatures are not accepted.
         if pk.verify(data, &sig, false).is_ok() {
-            let expected = expected_trusted_comment(version);
             if sig.trusted_comment() != expected {
                 return Err(sig_error(format!(
                     "the signature is for {:?}, not {expected:?}",
@@ -470,17 +748,37 @@ pub fn verify_signature(
     Err(sig_error("the signature does not match a trusted key"))
 }
 
-/// Download the release's `.minisig` and verify `data` with it (see [`verify_signature`]).
+/// Download the release's `.minisig` and verify `data` with it (see
+/// [`verify_signature`]), from each address in order until one verifies.
 async fn check_release_signature(
     release: &ReleaseInfo,
     data: &[u8],
     keys: &[&str],
     allow_local_http: bool,
 ) -> anyhow::Result<()> {
-    let sig_url = release
-        .sig_url
-        .as_deref()
-        .ok_or_else(|| sig_error(format!("the release has no {SIG_ASSET_NAME}")))?;
+    if release.sig_urls.is_empty() {
+        return Err(sig_error(format!("the release has no {SIG_ASSET_NAME}")));
+    }
+    let mut last = None;
+    for url in &release.sig_urls {
+        match check_signature_at(url, release, data, keys, allow_local_http).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                eprintln!("update: signature from {url} not used: {e:#}");
+                last = Some(e);
+            }
+        }
+    }
+    Err(last.expect("at least one signature address"))
+}
+
+async fn check_signature_at(
+    sig_url: &str,
+    release: &ReleaseInfo,
+    data: &[u8],
+    keys: &[&str],
+    allow_local_http: bool,
+) -> anyhow::Result<()> {
     check_download_url(sig_url, allow_local_http)?;
     let resp = http()
         .get(sig_url)
@@ -534,33 +832,77 @@ pub async fn install(
     Ok(())
 }
 
-/// Download the checksum and the exe (size-capped, URL-checked) and verify
-/// them; then, unless `keys` is empty, download and verify the signature.
-/// Nothing touches the disk here.
+/// Get the expected checksum (the manifest's, or GitHub's `.sha256` asset),
+/// then download the exe from each address in order until a copy matches it
+/// (size-capped, URL-checked); then, unless `keys` is empty, download and
+/// verify the signature. Nothing touches the disk here.
 async fn download_verified(
     release: &ReleaseInfo,
     keys: &[&str],
     allow_local_http: bool,
     progress: &mut impl FnMut(Progress),
 ) -> anyhow::Result<Vec<u8>> {
-    check_download_url(&release.sha_url, allow_local_http)?;
-    check_download_url(&release.asset_url, allow_local_http)?;
+    let expected = match release.sha256 {
+        Some(h) => h,
+        None => {
+            let sha_url = release
+                .sha_url
+                .as_deref()
+                .context("the release has no checksum")?;
+            check_download_url(sha_url, allow_local_http)?;
+            let resp = http()
+                .get(sha_url)
+                .timeout(Duration::from_secs(30))
+                .send()
+                .await
+                .and_then(|r| r.error_for_status())
+                .context("could not download the checksum")?;
+            let sha_bytes = read_capped(resp, MAX_SHA_BYTES, "checksum file", |_, _| {})
+                .await
+                .context("could not download the checksum")?;
+            let sha_text = String::from_utf8_lossy(&sha_bytes);
+            parse_sha256_file(&sha_text).context("the checksum file is not valid")?
+        }
+    };
 
-    let resp = http()
-        .get(&release.sha_url)
-        .timeout(Duration::from_secs(30))
-        .send()
-        .await
-        .and_then(|r| r.error_for_status())
-        .context("could not download the checksum")?;
-    let sha_bytes = read_capped(resp, MAX_SHA_BYTES, "checksum file", |_, _| {})
-        .await
-        .context("could not download the checksum")?;
-    let sha_text = String::from_utf8_lossy(&sha_bytes);
-    let expected = parse_sha256_file(&sha_text).context("the checksum file is not valid")?;
+    let mut last = None;
+    let mut data = None;
+    for url in &release.asset_urls {
+        match download_one(url, &expected, allow_local_http, progress).await {
+            Ok(d) => {
+                data = Some(d);
+                break;
+            }
+            Err(e) => {
+                eprintln!("update: {url} not used: {e:#}");
+                last = Some(e);
+            }
+        }
+    }
+    let Some(data) = data else {
+        return Err(last.unwrap_or_else(|| anyhow::anyhow!("the release has no download address")));
+    };
+    if keys.is_empty() {
+        eprintln!(
+            "update: signature checking is not configured (update::TRUSTED_PUBLIC_KEYS is empty); \
+             verified the sha256 only"
+        );
+    } else {
+        check_release_signature(release, &data, keys, allow_local_http).await?;
+    }
+    Ok(data)
+}
 
+/// Download one copy of the exe from `url` and check it against `expected`.
+async fn download_one(
+    url: &str,
+    expected: &[u8; 32],
+    allow_local_http: bool,
+    progress: &mut impl FnMut(Progress),
+) -> anyhow::Result<Vec<u8>> {
+    check_download_url(url, allow_local_http)?;
     let resp = http()
-        .get(&release.asset_url)
+        .get(url)
         .send()
         .await
         .and_then(|r| r.error_for_status())
@@ -572,17 +914,8 @@ async fn download_verified(
     if data.is_empty() {
         bail!("the downloaded file is empty");
     }
-
     progress(Progress::Verifying);
-    verify_sha256(&data, &expected)?;
-    if keys.is_empty() {
-        eprintln!(
-            "update: signature checking is not configured (update::TRUSTED_PUBLIC_KEYS is empty); \
-             verified the sha256 only"
-        );
-    } else {
-        check_release_signature(release, &data, keys, allow_local_http).await?;
-    }
+    verify_sha256(&data, expected)?;
     Ok(data)
 }
 
@@ -803,16 +1136,24 @@ mod tests {
         assert_eq!(r.version, "2.1.0");
         assert_eq!(r.notes, "## What's new\n- Auto update");
         assert_eq!(r.published_at.as_deref(), Some("2026-10-01T12:00:00Z"));
-        assert!(r.asset_url.ends_with("/local-ai-chat.exe"));
-        assert!(r.sha_url.ends_with("/local-ai-chat.exe.sha256"));
-        assert_eq!(r.sig_url, None); // optional: old releases have no signature
+        assert_eq!(r.asset_urls.len(), 1);
+        assert!(r.asset_urls[0].ends_with("/local-ai-chat.exe"));
+        assert!(
+            r.sha_url
+                .as_deref()
+                .unwrap()
+                .ends_with("/local-ai-chat.exe.sha256")
+        );
+        assert_eq!(r.sha256, None);
+        assert!(r.sig_urls.is_empty()); // optional: old releases have no signature
 
         let signed = RELEASE_JSON.replace(
             r#""assets": ["#,
             r#""assets": [{"name": "local-ai-chat.exe.minisig", "browser_download_url": "https://github.com/x/y/releases/download/v2.1.0/local-ai-chat.exe.minisig"},"#,
         );
         let r = parse_release(signed.as_bytes()).unwrap();
-        assert!(r.sig_url.unwrap().ends_with("/local-ai-chat.exe.minisig"));
+        assert_eq!(r.sig_urls.len(), 1);
+        assert!(r.sig_urls[0].ends_with("/local-ai-chat.exe.minisig"));
 
         let no_assets = r#"{"tag_name": "v2.1.0", "assets": []}"#;
         assert!(parse_release(no_assets.as_bytes()).is_err());
@@ -951,9 +1292,10 @@ mod tests {
             version: "9.9.9".into(),
             notes: String::new(),
             published_at: None,
-            asset_url: format!("{base}{exe}"),
-            sha_url: format!("{base}{sha}"),
-            sig_url: None,
+            asset_urls: vec![format!("{base}{exe}")],
+            sha_url: Some(format!("{base}{sha}")),
+            sha256: None,
+            sig_urls: Vec::new(),
         }
     }
 
@@ -1270,12 +1612,12 @@ mod tests {
         ]);
         let mut p = |_| {};
         let mut r = release_at(&base, "/exe", "/sha");
-        assert!(r.sig_url.is_none());
+        assert!(r.sig_urls.is_empty());
         assert_eq!(
             download_verified(&r, &[], true, &mut p).await.unwrap(),
             data
         );
-        r.sig_url = Some(format!("{base}/bad.minisig"));
+        r.sig_urls = vec![format!("{base}/bad.minisig")];
         assert_eq!(
             download_verified(&r, &[], true, &mut p).await.unwrap(),
             data
@@ -1299,7 +1641,7 @@ mod tests {
         let mut progress = |_: Progress| {};
         let with_sig = |sig: Option<&str>| {
             let mut r = release_at(&base, "/exe", "/sha");
-            r.sig_url = sig.map(|s| format!("{base}{s}"));
+            r.sig_urls = sig.map(|s| format!("{base}{s}")).into_iter().collect();
             r
         };
 
@@ -1364,6 +1706,340 @@ mod tests {
         assert!(verify_signature(&tampered, &sig, &version, &key).is_err());
         assert!(verify_signature(&data, &sig, &version, TRUSTED_PUBLIC_KEYS).is_err());
         println!("dry run: signature verified for local-ai-chat v{version}");
+    }
+
+    // ------------------------------------------------------------ manifest
+    // Fixtures: tests/fixtures/update-signing/manifest.json*, a fake v9.9.9 whose
+    // exe is payload.bin, made by tools/make-update-manifest and signed with the
+    // same TEST-ONLY keys (regen.sh).
+
+    const MANIFEST: &str = fixture!("manifest.json");
+    const MSIG_PRIMARY: &str = fixture!("manifest.json.minisig");
+    const MSIG_BACKUP: &str = fixture!("manifest.json.backup.minisig");
+    const MSIG_OTHER_KEY: &str = fixture!("manifest.json.other-key.minisig");
+    const MSIG_WRONG_VERSION: &str = fixture!("manifest.json.wrong-version.minisig");
+    const MSIG_EXE_COMMENT: &str = fixture!("manifest.json.exe-comment.minisig");
+    const MSIG_LEGACY: &str = fixture!("manifest.json.legacy.minisig");
+    const MIRROR_EXE: &str = "https://updates.fastkiwi.app/local-ai-chat/v9.9.9/local-ai-chat.exe";
+    const GITHUB_EXE: &str = "https://github.com/sarmadiq9090-coder/local-ai-chat/releases/download/v9.9.9/local-ai-chat.exe";
+
+    fn payload_sha() -> [u8; 32] {
+        Sha256::digest(PAYLOAD.as_bytes()).into()
+    }
+
+    /// A GitHub release `tag` whose `.sha256` asset is `{files}{sha_path}`.
+    fn gh_json(tag: &str, files: &str, sha_path: &str) -> Vec<u8> {
+        format!(
+            r#"{{"tag_name": "{tag}", "body": "notes", "draft": false, "assets": [
+              {{"name": "local-ai-chat.exe", "browser_download_url": "{files}/gh.exe"}},
+              {{"name": "local-ai-chat.exe.sha256", "browser_download_url": "{files}{sha_path}"}}]}}"#
+        )
+        .into_bytes()
+    }
+
+    fn is_manifest_release(r: &ReleaseInfo) -> bool {
+        r.asset_urls == [MIRROR_EXE, GITHUB_EXE] && r.sha_url.is_none()
+    }
+
+    #[test]
+    fn manifest_fixture_parses() {
+        let r = parse_manifest(MANIFEST.as_bytes(), false).unwrap();
+        assert_eq!(r.version, "9.9.9");
+        assert!(is_manifest_release(&r), "{r:?}");
+        assert_eq!(r.sha256, Some(payload_sha()));
+        assert_eq!(
+            r.sig_urls,
+            [
+                format!("{MIRROR_EXE}.minisig"),
+                format!("{GITHUB_EXE}.minisig")
+            ]
+        );
+        assert_eq!(r.published_at.as_deref(), Some("2026-11-13T06:00:00Z"));
+        assert_eq!(
+            expected_manifest_comment("9.9.9"),
+            "local-ai-chat update-manifest v9.9.9"
+        );
+        assert_ne!(
+            expected_manifest_comment("9.9.9"),
+            expected_trusted_comment("9.9.9")
+        );
+    }
+
+    #[test]
+    fn hostile_manifests_are_refused() {
+        let m = |from: &str, to: &str| MANIFEST.replacen(from, to, 1);
+        let hex = to_hex(&payload_sha());
+        for (what, bad) in [
+            (
+                "other app",
+                m("\"app\": \"local-ai-chat\"", "\"app\": \"instafind\""),
+            ),
+            ("schema", m("\"schema\": 1", "\"schema\": 2")),
+            ("tag", m("\"tag\": \"v9.9.9\"", "\"tag\": \"v9.9.8\"")),
+            (
+                "pre-release",
+                m("\"version\": \"9.9.9\"", "\"version\": \"9.9.9-rc.1\""),
+            ),
+            (
+                "leading zero",
+                m("\"version\": \"9.9.9\"", "\"version\": \"09.9.9\""),
+            ),
+            ("size 0", m("\"size\": 54", "\"size\": 0")),
+            ("huge", m("\"size\": 54", "\"size\": 999999999999")),
+            (
+                "upper-case sha",
+                MANIFEST.replacen(&hex, &hex.to_uppercase(), 1),
+            ),
+            ("short sha", MANIFEST.replacen(&hex, "abc", 1)),
+            (
+                "other name",
+                m("\"name\": \"local-ai-chat.exe\"", "\"name\": \"lemon.exe\""),
+            ),
+            ("other arch", m("\"x64\"", "\"arm64\"")),
+            (
+                "no usable url",
+                m(
+                    MIRROR_EXE,
+                    "http://updates.fastkiwi.app/x/local-ai-chat.exe",
+                )
+                .replacen(GITHUB_EXE, "https://github.com/x/other.exe", 1),
+            ),
+            ("not json", "nope".into()),
+            (
+                "too big",
+                format!("{MANIFEST}{}", " ".repeat(MAX_MANIFEST_BYTES as usize)),
+            ),
+        ] {
+            assert!(parse_manifest(bad.as_bytes(), false).is_err(), "{what}");
+        }
+        assert!(MANIFEST.contains("\"size\": 54"), "fixture size changed");
+        // Bad addresses are dropped, the good one stays.
+        for evil in [
+            "http://updates.fastkiwi.app/local-ai-chat/v9.9.9/local-ai-chat.exe",
+            "https://updates.fastkiwi.app/local-ai-chat/v9.9.9/local-ai-chat.exe?x=1",
+            "https://updates.fastkiwi.app/local-ai-chat/v9.9.9/local-ai-chat.exe.zip",
+            "http://127.0.0.1:9/local-ai-chat.exe",
+        ] {
+            let r = parse_manifest(m(MIRROR_EXE, evil).as_bytes(), false).unwrap();
+            assert_eq!(r.asset_urls, [GITHUB_EXE], "{evil}");
+        }
+        // Local http only with the dev override.
+        let local = m(MIRROR_EXE, "http://127.0.0.1:9/local-ai-chat.exe");
+        assert_eq!(
+            parse_manifest(local.as_bytes(), true)
+                .unwrap()
+                .asset_urls
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn manifest_signatures() {
+        let keys = test_keys();
+        let data = MANIFEST.as_bytes();
+        let want = expected_manifest_comment("9.9.9");
+        verify_minisign(data, MSIG_PRIMARY, &want, &keys).unwrap();
+        verify_minisign(data, MSIG_BACKUP, &want, &keys).unwrap();
+        for (sig, needle) in [
+            (MSIG_OTHER_KEY, "does not match a trusted key"),
+            (MSIG_WRONG_VERSION, "local-ai-chat update-manifest v9.9.8"),
+            (MSIG_EXE_COMMENT, "\"local-ai-chat v9.9.9\""),
+            (MSIG_LEGACY, "does not match a trusted key"),
+        ] {
+            assert_sig_err(verify_minisign(data, sig, &want, &keys), needle);
+        }
+        let changed = MANIFEST.replacen("9.9.9", "9.9.10", 1);
+        assert_sig_err(
+            verify_minisign(changed.as_bytes(), MSIG_PRIMARY, &want, &keys),
+            "trusted key",
+        );
+        assert_sig_err(
+            verify_minisign(data, MSIG_PRIMARY, &want, &[]),
+            "trusted key",
+        );
+        // The exe's signature never verifies the manifest.
+        assert!(verify_minisign(data, SIG_PRIMARY, &want, &keys).is_err());
+    }
+
+    #[tokio::test]
+    async fn resolve_uses_the_signed_manifest_and_falls_back_to_github() {
+        let sha_file = format!("{}  local-ai-chat.exe\n", to_hex(&payload_sha()));
+        let files = file_server(vec![
+            ("/sha", sha_file.into_bytes(), true),
+            (
+                "/badsha",
+                format!("{}  x\n", "0".repeat(64)).into_bytes(),
+                true,
+            ),
+        ]);
+        let mirror = file_server(vec![
+            ("/ok/latest.json", MANIFEST.into(), true),
+            ("/ok/latest.json.minisig", MSIG_PRIMARY.into(), true),
+            ("/backup/latest.json", MANIFEST.into(), true),
+            ("/backup/latest.json.minisig", MSIG_BACKUP.into(), true),
+            ("/other/latest.json", MANIFEST.into(), true),
+            ("/other/latest.json.minisig", MSIG_OTHER_KEY.into(), true),
+            ("/replay/latest.json", MANIFEST.into(), true),
+            (
+                "/replay/latest.json.minisig",
+                MSIG_WRONG_VERSION.into(),
+                true,
+            ),
+            ("/nosig/latest.json", MANIFEST.into(), true),
+            ("/html/latest.json", b"<html>".to_vec(), true),
+        ]);
+        let gh = file_server(vec![
+            ("/latest", gh_json("v9.9.9", &files, "/sha"), true),
+            ("/newer", gh_json("v9.9.10", &files, "/sha"), true),
+            ("/other-sha", gh_json("v9.9.9", &files, "/badsha"), true),
+        ]);
+        let (gh_ok, gh_newer, gh_other) = (
+            format!("{gh}/latest"),
+            format!("{gh}/newer"),
+            format!("{gh}/other-sha"),
+        );
+        let gh_404 = format!("{gh}/missing");
+        let down = "http://127.0.0.1:1/latest";
+        let url = |p: &str| format!("{mirror}{p}/latest.json");
+        let keys = test_keys();
+
+        // The signed manifest works while GitHub is down (404, or not answering).
+        for feed in [down, gh_404.as_str()] {
+            for p in ["/ok", "/backup"] {
+                let r = resolve(Some(&url(p)), feed, &keys, "9.9.8", true)
+                    .await
+                    .unwrap();
+                assert!(is_manifest_release(&r), "{p} {feed}: {r:?}");
+            }
+        }
+        // A missing, broken or wrongly signed manifest: GitHub's release.
+        for p in ["/missing", "/other", "/replay", "/nosig", "/html"] {
+            let r = resolve(Some(&url(p)), &gh_ok, &keys, "9.9.8", true)
+                .await
+                .unwrap();
+            assert!(r.sha_url.is_some() && r.version == "9.9.9", "{p}: {r:?}");
+        }
+        let r = resolve(
+            Some("http://127.0.0.1:1/latest.json"),
+            &gh_ok,
+            &keys,
+            "9.9.8",
+            true,
+        )
+        .await
+        .unwrap();
+        assert!(r.sha_url.is_some());
+        // Both down: GitHub's neutral "can't be reached" error.
+        let e = resolve(Some(&url("/missing")), &gh_404, &keys, "9.9.8", true)
+            .await
+            .unwrap_err();
+        assert!(is_server_unreachable(&e), "{e:#}");
+        // Up to date or newer than the manifest: reported, never offered (no downgrade).
+        for current in ["9.9.9", "10.0.0"] {
+            let r = resolve(Some(&url("/ok")), down, &keys, current, true)
+                .await
+                .unwrap();
+            assert!(
+                is_manifest_release(&r) && !is_newer(&r.version, current),
+                "{current}"
+            );
+        }
+        // A stale mirror: GitHub's newer release wins.
+        let r = resolve(Some(&url("/ok")), &gh_newer, &keys, "9.9.9", true)
+            .await
+            .unwrap();
+        assert_eq!(r.version, "9.9.10");
+        // No manifest URL (dev feed override only): GitHub.
+        let r = resolve(None, &gh_ok, &keys, "9.9.8", true).await.unwrap();
+        assert!(r.sha_url.is_some());
+
+        // No keys (today): the manifest only when GitHub has the same exe.
+        let r = resolve(Some(&url("/other")), &gh_ok, &[], "9.9.8", true)
+            .await
+            .unwrap();
+        assert!(
+            is_manifest_release(&r),
+            "the signature is not even checked: {r:?}"
+        );
+        for feed in [&gh_other, &gh_newer] {
+            let r = resolve(Some(&url("/ok")), feed, &[], "9.9.8", true)
+                .await
+                .unwrap();
+            assert!(r.sha_url.is_some(), "{feed}: {r:?}");
+        }
+        let e = resolve(Some(&url("/ok")), &gh_404, &[], "9.9.8", true)
+            .await
+            .unwrap_err();
+        assert!(
+            is_server_unreachable(&e),
+            "nothing confirms the manifest: {e:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn download_tries_each_address_in_order() {
+        let payload = PAYLOAD.as_bytes().to_vec();
+        let base = file_server(vec![
+            ("/broken", b"evil exe".to_vec(), true),
+            ("/exe", payload.clone(), true),
+            ("/sig", SIG_PRIMARY.as_bytes().to_vec(), true),
+            ("/badsig", SIG_OTHER_KEY.as_bytes().to_vec(), true),
+        ]);
+        let at = |paths: &[&str]| {
+            paths
+                .iter()
+                .map(|p| format!("{base}{p}"))
+                .collect::<Vec<_>>()
+        };
+        let release = |exes: &[&str], sigs: &[&str]| ReleaseInfo {
+            version: SIGNED_VERSION.into(),
+            notes: String::new(),
+            published_at: None,
+            asset_urls: at(exes),
+            sha_url: None,
+            sha256: Some(payload_sha()),
+            sig_urls: at(sigs),
+        };
+        let keys = test_keys();
+        let mut p = |_: Progress| {};
+        // Missing, then altered, then good; the same for the signature.
+        let r = release(
+            &["/missing", "/broken", "/exe"],
+            &["/missing.minisig", "/badsig", "/sig"],
+        );
+        assert_eq!(
+            download_verified(&r, &keys, true, &mut p).await.unwrap(),
+            payload
+        );
+        assert_eq!(
+            download_verified(&r, &[], true, &mut p).await.unwrap(),
+            payload
+        );
+        // No good copy: the last address's error.
+        let r = release(&["/missing", "/broken"], &["/sig"]);
+        let e = download_verified(&r, &keys, true, &mut p)
+            .await
+            .unwrap_err();
+        assert!(format!("{e:#}").contains("checksum mismatch"), "{e:#}");
+        // No good signature: refused.
+        let r = release(&["/exe"], &["/missing.minisig", "/badsig"]);
+        let e = download_verified(&r, &keys, true, &mut p)
+            .await
+            .unwrap_err();
+        assert!(is_signature_error(&e), "{e:#}");
+        let r = release(&["/exe"], &[]);
+        assert!(is_signature_error(
+            &download_verified(&r, &keys, true, &mut p)
+                .await
+                .unwrap_err()
+        ));
+        // Plain http without the dev override: refused before downloading.
+        let r = release(&["/exe"], &["/sig"]);
+        let e = download_verified(&r, &keys, false, &mut p)
+            .await
+            .unwrap_err();
+        assert!(format!("{e:#}").contains("insecure"), "{e:#}");
     }
 
     #[test]

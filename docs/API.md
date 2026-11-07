@@ -194,7 +194,9 @@ the numbered passages given to the model, `n` matches the `[n]` citations).
 ## Auto-update — `/api/app/update/...`
 
 Implemented in `src/server/routes/update.rs` + `src/update.rs` (spec: `docs/specs/auto-update.md`).
-Source: GitHub `releases/latest` of `sarmadiq9090-coder/local-ai-chat` (const `update::REPO`), assets
+Source: the signed manifest `https://updates.fastkiwi.app/local-ai-chat/latest.json` first
+(`update::MANIFEST_URL`, spec: `docs/specs/update-manifest.md`; override `LOCALAI_UPDATE_MANIFEST=<url>|off`),
+then GitHub `releases/latest` of `sarmadiq9090-coder/local-ai-chat` (const `update::REPO`), assets
 `local-ai-chat.exe` + `local-ai-chat.exe.sha256` (`<hex>  local-ai-chat.exe`). Dev/test override: env var
 `LOCALAI_UPDATE_FEED=<url>` returning JSON shaped like a GitHub release. Asset and checksum URLs
 (and redirects) must be `https://`; plain `http://` to `127.0.0.1` / `localhost` is accepted only

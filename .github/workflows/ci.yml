@@ -77,6 +77,17 @@ jobs:
       - name: Audit .github/workflows
         run: pipx run --spec zizmor==1.32.0 zizmor --offline --min-severity low .github/workflows
 
+  update-manifest-tool:
+    name: update manifest tool (tools/make-update-manifest)
+    # Stdlib-only Python; the signing round trip runs because minisign is installed.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - run: sudo apt-get install -y --no-install-recommends minisign
+      - run: python3 -m unittest discover -s tools -p "test_*.py" -v
+
   i18n:
     name: ar/en string parity (ui/**/strings.js)
     # tests/i18n_parity.rs: same keys in ar and en, no empty values, same {placeholders}.

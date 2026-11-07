@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "app": "local-ai-chat",
+  "version": "9.9.9",
+  "tag": "v9.9.9",
+  "released": "2026-11-13T06:00:00Z",
+  "notes_url": "https://fastkiwi.app/lemon/",
+  "notes": "",
+  "assets": {
+    "x64": {
+      "name": "local-ai-chat.exe",
+      "size": 54,
+      "sha256": "f5addaa60c8ee9b310ff620c9660d42f41b3cf245d994c3ae3c3e0d073fd461a",
+      "sha512": "3O5tUzfyXCH1kiO4GocmbTvMbMrTuie4jI9E0bpN6aTAQ8IQOaLjmMTaEN0eAjrQF5rvDmgE5YSPkLXLmO+Vlg==",
+      "urls": [
+        "https://updates.fastkiwi.app/local-ai-chat/v9.9.9/local-ai-chat.exe",
+        "https://github.com/sarmadiq9090-coder/local-ai-chat/releases/download/v9.9.9/local-ai-chat.exe"
+      ]
+    }
+  }
+}

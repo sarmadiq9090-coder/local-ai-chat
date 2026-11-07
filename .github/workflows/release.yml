@@ -6,8 +6,12 @@ name: Release
 #   local-ai-chat.exe          the new exe
 #   local-ai-chat.exe.sha256   "<hex>  local-ai-chat.exe" (2.2.0 and older clients require it)
 #   local-ai-chat.exe.minisig  minisign signature, trusted comment "local-ai-chat <tag>"
+#   latest.json                the update manifest (not for pre-releases), and
+#   latest.json.minisig        its signature, "local-ai-chat update-manifest <tag>",
+#                              whenever MINISIGN_SECRET_KEY exists
 # plus a GitHub build-provenance attestation. Specs: docs/specs/auto-update.md,
-# docs/specs/signing.md (threat model, keys, owner setup).
+# docs/specs/signing.md (threat model, keys, owner setup),
+# docs/specs/update-manifest.md (the manifest the Cloudflare mirror serves).
 #
 # So releasing = merging a PR that bumps `version` in Cargo.toml. The tag is made
 # by `publish` (`gh release create v<version> --target <sha>`, as a draft, then
@@ -19,7 +23,8 @@ name: Release
 #   version  ubuntu, read-only, no checkout: reads Cargo.toml at this commit and
 #            asks the API whether tag `v<version>` exists. Outputs new=true when
 #            this run must release (main push with a new version, or a tag push).
-#   build    windows, read-only token, no secrets, no cache: test + build the exe.
+#   build    windows, read-only token, no secrets, no cache: test + build the exe,
+#            and write latest.json with tools/make-update-manifest.
 #   sign     bound to the `release` Environment (owner approval; allowed refs:
 #            branch main + v* tags; holds MINISIGN_SECRET_KEY / MINISIGN_PASSWORD).
 #            Runs NO repository code: downloads the build artifact, installs a
@@ -29,6 +34,8 @@ name: Release
 #            then a missing secret fails the release. With no committed keys
 #            (the app's TRUSTED_PUBLIC_KEYS is empty too, a unit test ties them)
 #            it warns and skips: the release ships without a .minisig, as 2.2.0.
+#            latest.json is signed whenever the secret exists (skipped without it:
+#            apps then use it only when GitHub reports the same sha256).
 #   publish  contents/attestations write: attests, creates a DRAFT release with the
 #            assets (3 when signed, 2 when signing is off; and the tag, at this
 #            commit), checks they are all there, then publishes it.
@@ -190,6 +197,20 @@ jobs:
             : > dist/notes.md
           fi
 
+      - name: Write the update manifest (latest.json)
+        shell: bash
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          # Pre-releases are never offered by the updater, so they get no manifest.
+          case "$TAG" in *-*) echo "$TAG is a pre-release: no update manifest"; exit 0 ;; esac
+          # A missing dist/notes.md (manual dry run) means no notes.
+          python tools/make-update-manifest build --app local-ai-chat --version "$VERSION" \
+            --repo "$GITHUB_REPOSITORY" --notes-file dist/notes.md --notes-url https://fastkiwi.app/lemon/ \
+            --asset x64=dist/local-ai-chat.exe --out dist/latest.json
+          python tools/make-update-manifest verify dist/latest.json --app local-ai-chat --assets dist
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-dist
@@ -207,6 +228,7 @@ jobs:
       contents: read # read the committed public keys through the API
     outputs:
       signed: ${{ steps.keys.outputs.configured }}
+      manifest_signed: ${{ steps.keys.outputs.sign_manifest }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -216,6 +238,19 @@ jobs:
       - name: Check the artifact's checksum
         working-directory: dist
         run: sha256sum -c local-ai-chat.exe.sha256
+
+      # Sign only what this job checked itself: the manifest names this tag and
+      # the sha256 of the exe above.
+      - name: Check the update manifest
+        working-directory: dist
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          if [ ! -f latest.json ]; then echo "No latest.json (pre-release)"; exit 0; fi
+          want=$(cut -d' ' -f1 local-ai-chat.exe.sha256)
+          jq -e --arg tag "$TAG" --arg h "$want" \
+            '.schema == 1 and .app == "local-ai-chat" and .tag == $tag
+             and .assets.x64.name == "local-ai-chat.exe" and .assets.x64.sha256 == $h' latest.json
 
       - name: Fetch the committed public keys
         id: keys
@@ -255,9 +290,19 @@ jobs:
             fi
             echo "configured=false" >> "$GITHUB_OUTPUT"
           fi
+          # The update manifest is signed whenever the secret exists (optional:
+          # skipped with a warning without it).
+          if [ "${HAS_SECRET}" = "true" ] && [ -f dist/latest.json ]; then
+            echo "sign_manifest=true" >> "$GITHUB_OUTPUT"
+          else
+            if [ -f dist/latest.json ]; then
+              echo "::warning::latest.json is NOT signed (no MINISIGN_SECRET_KEY): apps use it only when GitHub reports the same sha256. docs/specs/update-manifest.md"
+            fi
+            echo "sign_manifest=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Install minisign (pinned, checksum-verified)
-        if: steps.keys.outputs.configured == 'true'
+        if: steps.keys.outputs.configured == 'true' || steps.keys.outputs.sign_manifest == 'true'
         run: |
           cd "$RUNNER_TEMP"
           curl -sSfL -o minisign.tar.gz "$MINISIGN_LINUX_URL"
@@ -307,6 +352,43 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Sign the update manifest
+        if: steps.keys.outputs.sign_manifest == 'true'
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          umask 077
+          key="$RUNNER_TEMP/minisign.key"
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "${MINISIGN_SECRET_KEY}" > "$key"
+          printf '%s\n' "${MINISIGN_PASSWORD}" |
+            minisign -S -s "$key" -m dist/latest.json -t "local-ai-chat update-manifest ${TAG}"
+          # No committed public key yet: check against the secret key's own public half.
+          if ! ls "$RUNNER_TEMP"/pub/*.pub >/dev/null 2>&1; then
+            printf '%s\n' "${MINISIGN_PASSWORD}" |
+              minisign -R -s "$key" -p "$RUNNER_TEMP/pub/from-secret.pub"
+          fi
+          expected="local-ai-chat update-manifest ${TAG}"
+          for pub in "$RUNNER_TEMP"/pub/*.pub; do
+            if comment=$(minisign -V -H -Q -m dist/latest.json -p "$pub"); then
+              [ "$comment" = "$expected" ] || { echo "::error::latest.json: trusted comment '$comment'"; exit 1; }
+              echo "latest.json verified with $(basename "$pub"): $comment"
+              exit 0
+            fi
+          done
+          echo "::error::latest.json: the signature does not verify with any public key (wrong MINISIGN_SECRET_KEY?)"
+          exit 1
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.keys.outputs.sign_manifest == 'true'
+        with:
+          name: release-manifest-sig
+          path: dist/latest.json.minisig
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
     needs: [version, build, sign]
     if: needs.version.outputs.new == 'true' && github.event_name == 'push'
@@ -327,6 +409,7 @@ jobs:
         working-directory: dist
         env:
           SIGNED: ${{ needs.sign.outputs.signed }}
+          MANIFEST_SIGNED: ${{ needs.sign.outputs.manifest_signed }}
         run: |
           sha256sum -c local-ai-chat.exe.sha256
           files="local-ai-chat.exe local-ai-chat.exe.sha256"
@@ -334,6 +417,13 @@ jobs:
             files="$files local-ai-chat.exe.minisig"
           elif [ -e local-ai-chat.exe.minisig ]; then
             echo "::error::unexpected local-ai-chat.exe.minisig while signing is off"; exit 1
+          fi
+          # The update manifest rides along for the Cloudflare mirror.
+          if [ -e latest.json ]; then files="$files latest.json"; fi
+          if [ "${MANIFEST_SIGNED}" = "true" ]; then
+            files="$files latest.json.minisig"
+          elif [ -e latest.json.minisig ]; then
+            echo "::error::unexpected latest.json.minisig"; exit 1
           fi
           for f in $files; do
             [ -s "$f" ] || { echo "::error::missing $f"; exit 1; }
