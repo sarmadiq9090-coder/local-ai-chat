@@ -11,7 +11,10 @@ name: Release
 #                              whenever MINISIGN_SECRET_KEY exists
 # plus a GitHub build-provenance attestation. Specs: docs/specs/auto-update.md,
 # docs/specs/signing.md (threat model, keys, owner setup),
-# docs/specs/update-manifest.md (the manifest the Cloudflare mirror serves).
+# docs/specs/update-manifest.md (the manifest fastkiwi.app serves). After the
+# release is public, `publish` also hands latest.json(.minisig) over as the
+# artifact `site-updates` (updates/local-ai-chat/...), which the website repo's
+# deploy picks up; this workflow uploads nothing to any other host.
 #
 # So releasing = merging a PR that bumps `version` in Cargo.toml. The tag is made
 # by `publish` (`gh release create v<version> --target <sha>`, as a draft, then
@@ -38,7 +41,8 @@ name: Release
 #            apps then use it only when GitHub reports the same sha256).
 #   publish  contents/attestations write: attests, creates a DRAFT release with the
 #            assets (3 when signed, 2 when signing is off; and the tag, at this
-#            commit), checks they are all there, then publishes it.
+#            commit), checks they are all there, then publishes it, and stages
+#            the manifest as the `site-updates` artifact for the website.
 #   dry-run  (manual "Run workflow" only) signs with a throwaway key made in the
 #            job and verifies it with minisign AND the app's Rust verifier. No
 #            secrets, no release.
@@ -418,7 +422,7 @@ jobs:
           elif [ -e local-ai-chat.exe.minisig ]; then
             echo "::error::unexpected local-ai-chat.exe.minisig while signing is off"; exit 1
           fi
-          # The update manifest rides along for the Cloudflare mirror.
+          # The update manifest rides along (the website serves its copy).
           if [ -e latest.json ]; then files="$files latest.json"; fi
           if [ "${MANIFEST_SIGNED}" = "true" ]; then
             files="$files latest.json.minisig"
@@ -503,6 +507,31 @@ jobs:
             exit 1
           fi
           echo "Released ${TAG} at ${sha}"
+
+      # fastkiwi.app/updates/local-ai-chat/ serves the manifest: this only hands
+      # the checked files over as an artifact, after the release is public (no
+      # repository code runs here). The website repo's deploy publishes them.
+      - name: Stage latest.json for the website
+        id: stage
+        env:
+          MANIFEST_SIGNED: ${{ needs.sign.outputs.manifest_signed }}
+        run: |
+          if [ ! -s dist/latest.json ]; then echo "No latest.json (pre-release): nothing to stage"; exit 0; fi
+          mkdir -p site-updates/updates/local-ai-chat
+          cp dist/latest.json site-updates/updates/local-ai-chat/latest.json
+          if [ "${MANIFEST_SIGNED}" = "true" ]; then
+            cp dist/latest.json.minisig site-updates/updates/local-ai-chat/latest.json.minisig
+          else
+            echo "::warning::latest.json is staged for the website NOT signed"
+          fi
+          echo "staged=true" >> "$GITHUB_OUTPUT"
+      - if: steps.stage.outputs.staged == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: site-updates
+          path: site-updates/
+          if-no-files-found: error
+          retention-days: 30
 
   dry-run:
     needs: [version, build]

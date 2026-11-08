@@ -3,7 +3,7 @@
 The user's words: *"Make an auto-update button."*
 
 ## Behavior
-1. On startup (and at most once every 6 h while open) the app checks the signed update manifest on Cloudflare (`https://updates.fastkiwi.app/local-ai-chat/latest.json`, spec: `docs/specs/update-manifest.md`) and falls back to the latest GitHub release of `REPO` (const, e.g. `sarmadiq9090-coder/local-ai-chat`) when it is unreachable or not trusted.
+1. On startup (and at most once every 6 h while open) the app checks the signed update manifest on the website (`https://fastkiwi.app/updates/local-ai-chat/latest.json`, spec: `docs/specs/update-manifest.md`) and falls back to the latest GitHub release of `REPO` (const, e.g. `sarmadiq9090-coder/local-ai-chat`) when it is unreachable or not trusted.
 2. If `latest.tag_name` (semver, `v2.1.0`) > `CARGO_PKG_VERSION`, the sidebar footer shows a highlighted **"تحديث متاح v2.1.0 / Update available"** button. Settings also has "Check for updates" + an "auto-check" toggle (default on).
 3. Clicking it opens a modal: version, release notes (rendered Markdown), **"تحديث الآن / Update now"**.
 4. Update now → backend downloads the release asset `local-ai-chat.exe` with a progress bar (NDJSON stream), verifies it against the `local-ai-chat.exe.sha256` asset and — once release-signing keys are compiled in — against the minisign signature `local-ai-chat.exe.minisig` (see **Signature** below), then:

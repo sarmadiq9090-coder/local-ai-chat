@@ -1,11 +1,11 @@
 //! Auto-update (specs: `docs/specs/auto-update.md`, `docs/specs/update-manifest.md`).
 //!
-//! - `fetch_latest()` asks the signed update manifest on Cloudflare first
+//! - `fetch_latest()` asks the signed update manifest on fastkiwi.app first
 //!   ([`MANIFEST_URL`]) and GitHub Releases of [`REPO`] as the fallback (a
 //!   [`ServerUnreachable`] error when GitHub refuses or finds no release / no
 //!   repo); `is_newer()` compares it to this build. See [`resolve`].
 //! - `install()` downloads the `local-ai-chat.exe` asset from each address in
-//!   order (the mirror first), verifies it against the manifest's SHA-256 or the
+//!   order (GitHub first, then the GitLab copy), verifies it against the manifest's SHA-256 or the
 //!   `local-ai-chat.exe.sha256` asset and — once [`TRUSTED_PUBLIC_KEYS`] is not
 //!   empty — against the minisign signature `local-ai-chat.exe.minisig`
 //!   (spec: `docs/specs/signing.md`), swaps it in place of the running exe
@@ -50,10 +50,15 @@ pub const AFTER_UPDATE_ARG: &str = "--after-update";
 const FEED_ENV: &str = "LOCALAI_UPDATE_FEED";
 /// Dev/test override for the update manifest URL (`off`: do not ask it).
 const MANIFEST_ENV: &str = "LOCALAI_UPDATE_MANIFEST";
-/// The signed update manifest on Cloudflare, asked before GitHub so updates
-/// keep working while GitHub is down (`docs/specs/update-manifest.md`). Its
-/// signature is `<this>.minisig`.
-pub const MANIFEST_URL: &str = "https://updates.fastkiwi.app/local-ai-chat/latest.json";
+/// The signed update manifest on the website (Cloudflare Pages), asked before
+/// GitHub so updates keep working while the GitHub API is down
+/// (`docs/specs/update-manifest.md`). Its signature is `<this>.minisig`.
+pub const MANIFEST_URL: &str = "https://fastkiwi.app/updates/local-ai-chat/latest.json";
+/// The fallback copies of the exe that the manifest may list after GitHub's:
+/// release assets of this repository's GitLab copy (populated later; until
+/// then they answer 404). No other GitLab project is accepted.
+pub const GITLAB_HOST: &str = "gitlab.com";
+pub const GITLAB_RELEASES_PATH: &str = "/fastkiwi1/local-ai-chat/-/releases/";
 /// The manifest's `app`.
 pub const MANIFEST_APP: &str = "local-ai-chat";
 /// This exe's key in the manifest's `assets` (Lemon ships x64 only).
@@ -217,8 +222,8 @@ pub struct ReleaseInfo {
     pub version: String,
     pub notes: String,
     pub published_at: Option<String>,
-    /// Where `local-ai-chat.exe` can be downloaded, tried in order (the
-    /// Cloudflare mirror first for a release from the manifest, then GitHub).
+    /// Where `local-ai-chat.exe` can be downloaded, tried in order (GitHub
+    /// first, then the GitLab copy for a release from the manifest).
     pub asset_urls: Vec<String>,
     /// GitHub's `local-ai-chat.exe.sha256` asset. `None` when [`Self::sha256`]
     /// comes from the manifest.
@@ -310,7 +315,8 @@ struct ManifestAsset {
 
 /// Parse the update manifest (`docs/specs/update-manifest.md`) into a release,
 /// whatever its version. Download addresses that are not `https://` (see
-/// [`check_download_url`]) or that name another file are dropped; at least one
+/// [`check_download_url`]) on GitHub or this project's GitLab releases (see
+/// [`manifest_host_ok`]), or that name another file, are dropped; at least one
 /// must remain.
 pub fn parse_manifest(json: &[u8], allow_local_http: bool) -> anyhow::Result<ReleaseInfo> {
     if json.len() as u64 > MAX_MANIFEST_BYTES {
@@ -350,7 +356,10 @@ pub fn parse_manifest(json: &[u8], allow_local_http: bool) -> anyhow::Result<Rel
         .filter(|u| {
             check_download_url(u, allow_local_http).is_ok()
                 && reqwest::Url::parse(u).is_ok_and(|p| {
-                    p.query().is_none()
+                    // Exactly as written: nothing the URL parser would rewrite.
+                    p.as_str() == u.as_str()
+                        && manifest_host_ok(&p, allow_local_http)
+                        && p.query().is_none()
                         && p.fragment().is_none()
                         && p.path_segments().and_then(|mut s| s.next_back()) == Some(ASSET_NAME)
                 })
@@ -370,6 +379,31 @@ pub fn parse_manifest(json: &[u8], allow_local_http: bool) -> anyhow::Result<Rel
         notes: m.notes,
         published_at: m.released,
     })
+}
+
+/// A download host the manifest may name: GitHub (and its download hosts),
+/// or a release asset of this project on GitLab (`GITLAB_RELEASES_PATH`, no
+/// `%` escapes). The loopback only with the dev override, for tests.
+pub fn manifest_host_ok(u: &reqwest::Url, allow_local_http: bool) -> bool {
+    let Some(host) = u.host_str().map(str::to_ascii_lowercase) else {
+        return false;
+    };
+    if allow_local_http && is_loopback_url(u) {
+        return true;
+    }
+    if u.scheme() != "https"
+        || u.port().is_some()
+        || !u.username().is_empty()
+        || u.password().is_some()
+    {
+        return false;
+    }
+    host == "github.com"
+        || host.ends_with(".github.com")
+        || host.ends_with(".githubusercontent.com")
+        || (host == GITLAB_HOST
+            && u.path().starts_with(GITLAB_RELEASES_PATH)
+            && !u.path().contains('%'))
 }
 
 /// The trusted comment the manifest's signature must carry, e.g.
@@ -465,9 +499,9 @@ async fn github_sha256(release: &ReleaseInfo, allow_local_http: bool) -> Option<
 /// 2. With `keys`, its signature must verify. Without keys (today), it is used
 ///    only if GitHub reports the same version with the same SHA-256.
 /// 3. A trusted manifest newer than `current` is returned with its download
-///    addresses in order (mirror first). A trusted manifest that is not newer
-///    is returned (up to date) unless GitHub has a newer release (a stale
-///    mirror); a failed GitHub check then does not matter.
+///    addresses in order (GitHub, then GitLab). A trusted manifest that is not
+///    newer is returned (up to date) unless GitHub has a newer release (a stale
+///    manifest); a failed GitHub check then does not matter.
 ///
 /// The caller offers only a strictly newer version ([`is_newer`]): never a downgrade.
 pub async fn resolve(
@@ -1720,7 +1754,8 @@ mod tests {
     const MSIG_WRONG_VERSION: &str = fixture!("manifest.json.wrong-version.minisig");
     const MSIG_EXE_COMMENT: &str = fixture!("manifest.json.exe-comment.minisig");
     const MSIG_LEGACY: &str = fixture!("manifest.json.legacy.minisig");
-    const MIRROR_EXE: &str = "https://updates.fastkiwi.app/local-ai-chat/v9.9.9/local-ai-chat.exe";
+    const GITLAB_EXE: &str =
+        "https://gitlab.com/fastkiwi1/local-ai-chat/-/releases/v9.9.9/downloads/local-ai-chat.exe";
     const GITHUB_EXE: &str = "https://github.com/sarmadiq9090-coder/local-ai-chat/releases/download/v9.9.9/local-ai-chat.exe";
 
     fn payload_sha() -> [u8; 32] {
@@ -1738,7 +1773,7 @@ mod tests {
     }
 
     fn is_manifest_release(r: &ReleaseInfo) -> bool {
-        r.asset_urls == [MIRROR_EXE, GITHUB_EXE] && r.sha_url.is_none()
+        r.asset_urls == [GITHUB_EXE, GITLAB_EXE] && r.sha_url.is_none()
     }
 
     #[test]
@@ -1750,8 +1785,8 @@ mod tests {
         assert_eq!(
             r.sig_urls,
             [
-                format!("{MIRROR_EXE}.minisig"),
-                format!("{GITHUB_EXE}.minisig")
+                format!("{GITHUB_EXE}.minisig"),
+                format!("{GITLAB_EXE}.minisig")
             ]
         );
         assert_eq!(r.published_at.as_deref(), Some("2026-11-13T06:00:00Z"));
@@ -1799,8 +1834,8 @@ mod tests {
             (
                 "no usable url",
                 m(
-                    MIRROR_EXE,
-                    "http://updates.fastkiwi.app/x/local-ai-chat.exe",
+                    GITLAB_EXE,
+                    "http://gitlab.com/fastkiwi1/local-ai-chat/-/releases/v9.9.9/downloads/local-ai-chat.exe",
                 )
                 .replacen(GITHUB_EXE, "https://github.com/x/other.exe", 1),
             ),
@@ -1815,16 +1850,24 @@ mod tests {
         assert!(MANIFEST.contains("\"size\": 54"), "fixture size changed");
         // Bad addresses are dropped, the good one stays.
         for evil in [
-            "http://updates.fastkiwi.app/local-ai-chat/v9.9.9/local-ai-chat.exe",
-            "https://updates.fastkiwi.app/local-ai-chat/v9.9.9/local-ai-chat.exe?x=1",
-            "https://updates.fastkiwi.app/local-ai-chat/v9.9.9/local-ai-chat.exe.zip",
+            "http://gitlab.com/fastkiwi1/local-ai-chat/-/releases/v9.9.9/downloads/local-ai-chat.exe",
+            "https://gitlab.com/fastkiwi1/local-ai-chat/-/releases/v9.9.9/downloads/local-ai-chat.exe?x=1",
+            "https://gitlab.com/fastkiwi1/local-ai-chat/-/releases/v9.9.9/downloads/local-ai-chat.exe.zip",
+            "https://gitlab.com/evil/local-ai-chat/-/releases/v9.9.9/downloads/local-ai-chat.exe",
+            "https://gitlab.com/fastkiwi1/local-ai-chat/-/releases/../../../../evil/x/-/raw/local-ai-chat.exe",
+            "https://gitlab.com/fastkiwi1/local-ai-chat/-/releases/v9.9.9/%2e%2e/local-ai-chat.exe",
+            "https://gitlab.com:8443/fastkiwi1/local-ai-chat/-/releases/v9.9.9/downloads/local-ai-chat.exe",
+            "https://u@gitlab.com/fastkiwi1/local-ai-chat/-/releases/v9.9.9/downloads/local-ai-chat.exe",
+            "https://gitlab.com.evil.example/fastkiwi1/local-ai-chat/-/releases/v9.9.9/downloads/local-ai-chat.exe",
+            "https://updates.fastkiwi.app/local-ai-chat/v9.9.9/local-ai-chat.exe",
+            "https://evil.example/local-ai-chat.exe",
             "http://127.0.0.1:9/local-ai-chat.exe",
         ] {
-            let r = parse_manifest(m(MIRROR_EXE, evil).as_bytes(), false).unwrap();
+            let r = parse_manifest(m(GITLAB_EXE, evil).as_bytes(), false).unwrap();
             assert_eq!(r.asset_urls, [GITHUB_EXE], "{evil}");
         }
         // Local http only with the dev override.
-        let local = m(MIRROR_EXE, "http://127.0.0.1:9/local-ai-chat.exe");
+        let local = m(GITLAB_EXE, "http://127.0.0.1:9/local-ai-chat.exe");
         assert_eq!(
             parse_manifest(local.as_bytes(), true)
                 .unwrap()
@@ -1873,7 +1916,7 @@ mod tests {
                 true,
             ),
         ]);
-        let mirror = file_server(vec![
+        let site = file_server(vec![
             ("/ok/latest.json", MANIFEST.into(), true),
             ("/ok/latest.json.minisig", MSIG_PRIMARY.into(), true),
             ("/backup/latest.json", MANIFEST.into(), true),
@@ -1901,7 +1944,7 @@ mod tests {
         );
         let gh_404 = format!("{gh}/missing");
         let down = "http://127.0.0.1:1/latest";
-        let url = |p: &str| format!("{mirror}{p}/latest.json");
+        let url = |p: &str| format!("{site}{p}/latest.json");
         let keys = test_keys();
 
         // The signed manifest works while GitHub is down (404, or not answering).
@@ -1945,7 +1988,7 @@ mod tests {
                 "{current}"
             );
         }
-        // A stale mirror: GitHub's newer release wins.
+        // A stale manifest: GitHub's newer release wins.
         let r = resolve(Some(&url("/ok")), &gh_newer, &keys, "9.9.9", true)
             .await
             .unwrap();
