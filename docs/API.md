@@ -243,6 +243,35 @@ Implemented in `src/server/routes/notices.rs`: `THIRD-PARTY-NOTICES.txt` (genera
 |---|---|---|---|
 | GET | `/api/app/notices` | – | `text/plain; charset=utf-8` — the notices file |
 
+## More from FastKiwi — `/api/app/more-from`
+
+Implemented in `src/server/routes/more_from.rs` and `src/more_from.rs`: the other FastKiwi apps, from
+a copy of the site's `data/apps.json` (schema 1) vendored in `ui/features/morefrom/data/` (source
+commit in `SOURCE.txt`, refreshed by `python3 tools/sync_apps.py --site <site checkout>`) and compiled
+into the exe. Nothing is fetched at runtime. Lemon itself is left out; an entry whose page isn't on
+`https://fastkiwi.app/`, or with an unknown `status`, is dropped. Shown in Settings by `ui/features/morefrom`.
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/api/app/more-from` | – | `MoreFromApp[]`, in apps.json order |
+
+```ts
+type MoreFromApp = {
+  id: string;                         // apps.json id, e.g. "remember-me"
+  coming_soon: boolean;               // status "coming-soon": page link only
+  name: { ar: string; en: string };
+  tagline: { ar: string; en: string };
+  description: { ar: string; en: string };
+  url: { ar: string; en: string };    // https://fastkiwi.app/... only
+  store: string | null;               // "ms-windows-store://pdp/?productid=<12 chars>" only for a
+                                      // released app whose Store listing is live
+  icon: string | null;                // UI path of the vendored icon, "features/morefrom/data/img/<id>.svg|png"
+};
+```
+
+The native window opens `https://` links in the default browser and, as its only custom scheme,
+exactly `ms-windows-store://pdp/?productid=<id>` (`src/window.rs`).
+
 ## Static UI (everything else)
 
 Embedded `ui/` files. Every response has `X-Content-Type-Options: nosniff`. `/` (`index.html`) also
