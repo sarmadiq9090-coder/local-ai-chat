@@ -1,9 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="InstaConvert">
-<title>InstaConvert</title>
-<path fill="#2F6249" d="M56.32 0H199.68A56.32 56.32 0 0 1 256 56.32V199.68A56.32 56.32 0 0 1 199.68 256H56.32A56.32 56.32 0 0 1 0 199.68V56.32A56.32 56.32 0 0 1 56.32 0Z"/>
-<path fill="#123B2A" d="M56.32 1H199.68A55.32 55.32 0 0 1 255 56.32V199.68A55.32 55.32 0 0 1 199.68 255H56.32A55.32 55.32 0 0 1 1 199.68V56.32A55.32 55.32 0 0 1 56.32 1Z"/>
-<path fill="#4FE0B0" d="M74 58H174A12 12 0 0 1 186 70V170A12 12 0 0 1 174 182H74A12 12 0 0 1 62 170V70A12 12 0 0 1 74 58Z"/>
-<path fill="#123B2A" d="M61 86H187V96H61ZM96.67 86H106.67V183H96.67ZM141.33 86H151.33V183H141.33ZM50 124H198V150H50Z"/>
-<path fill="#4FE0B0" d="M56 132H192A5 5 0 0 1 197 137V137A5 5 0 0 1 192 142H56A5 5 0 0 1 51 137V137A5 5 0 0 1 56 132Z"/>
-<path fill="#B9F34A" d="M228.8 197.69L223.85 223.85L197.69 228.8L202.64 202.64Z"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="InstaConvert"><title>InstaConvert</title><defs>
+<linearGradient id="ig" x1="0" y1="0" x2="1" y2="1"><stop offset="0.00" stop-color="#4f46e5"/><stop offset="0.20" stop-color="#5d42e6"/><stop offset="0.40" stop-color="#6a3ee7"/><stop offset="0.60" stop-color="#783be8"/><stop offset="0.80" stop-color="#8537e9"/><stop offset="1.00" stop-color="#9333ea"/></linearGradient>
+<radialGradient id="ih" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#fff" stop-opacity="0.16"/><stop offset="0.6" stop-color="#fff" stop-opacity="0.10"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+<filter id="is" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="25.6"/></filter>
+<clipPath id="ic"><rect x="30.72" y="30.72" width="961.56" height="961.56" rx="225.28"/></clipPath>
+</defs>
+<g clip-path="url(#ic)">
+<rect width="1024" height="1024" fill="url(#ig)"/>
+<ellipse cx="512.0" cy="-281.6" rx="972.8" ry="768.0" fill="url(#ih)"/>
+<g transform="translate(12.3 25.6)" stroke="#1a0a4a" fill="#1a0a4a" opacity="0.45" filter="url(#is)"><g transform="translate(-9 -9)"><g fill="none" stroke-linecap="round" stroke-linejoin="round"><rect x="236" y="236" width="420" height="420" rx="72" stroke-width="64"/><line x1="236" y1="380" x2="656" y2="380" stroke-width="44"/><line x1="236" y1="518" x2="656" y2="518" stroke-width="44"/><line x1="392" y1="380" x2="392" y2="656" stroke-width="44"/><line x1="640" y1="640" x2="770" y2="770" stroke-width="96"/></g><path d="M820 650 L820 820 L650 820 Z" stroke-linejoin="round" stroke-width="36"/></g></g>
+</g>
+<g transform="translate(-9 -9)"><rect x="236" y="236" width="420" height="420" rx="72" fill="#fff" fill-opacity="0.157"/><g stroke="#fff" fill="none" stroke-linecap="round" stroke-linejoin="round"><rect x="236" y="236" width="420" height="420" rx="72" stroke-width="64"/><line x1="236" y1="380" x2="656" y2="380" stroke-width="44"/><line x1="236" y1="518" x2="656" y2="518" stroke-width="44"/><line x1="392" y1="380" x2="392" y2="656" stroke-width="44"/><line x1="640" y1="640" x2="770" y2="770" stroke-width="96"/></g><path d="M820 650 L820 820 L650 820 Z" fill="#fff" stroke="#fff" stroke-linejoin="round" stroke-width="36"/></g>
 </svg>

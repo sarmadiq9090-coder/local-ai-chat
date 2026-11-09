@@ -1,4 +1,4 @@
 Vendored from the FastKiwi site repo (sarmadiq9090-coder/sarmadiq9090-coder.github.io):
-commit 2f13a0cbdda57e2f2f108eb65f47c21e52122959
+commit aea386137a1b8e729c3533062fa7636a264e4702
 files: data/apps.json and the icons in img/ (every app except Lemon).
 Refresh: python3 tools/sync_apps.py --site <site checkout> --ref <ref>
