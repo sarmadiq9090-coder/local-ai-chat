@@ -106,3 +106,7 @@ export async function getNotices() {
   if (!res.ok) throw await httpError(res);
   return res.text();
 }
+
+// ---------- more from FastKiwi (features/morefrom) ----------
+/** The other FastKiwi apps (vendored apps.json compiled into the exe; no internet request). */
+export const getMoreFrom = () => request("GET", "/api/app/more-from");
