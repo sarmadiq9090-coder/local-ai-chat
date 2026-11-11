@@ -23,6 +23,11 @@ exceptions = [
   { allow = ["MPL-2.0"], crate = "option-ext" },
 ]
 
+[licenses.private]
+# Our own crate is proprietary (license-file = LICENSE, publish = false, D-051): `private` crates are skipped by
+# the licence check; every third-party crate is still checked.
+ignore = true
+
 [bans]
 multiple-versions = "allow"
 wildcards = "deny"
