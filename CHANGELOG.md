@@ -16,6 +16,7 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 - 🔏 **تحديثات موقّعة:** صار المحدِّث قادرًا على التحقق من توقيع minisign لكل تحديث (`local-ai-chat.exe.minisig`) بمفاتيح مضمّنة في البرنامج، ويجب أن يطابق التوقيع رقم الإصدار نفسه. عند إضافة المفاتيح يُرفض أي تحديث بلا توقيع صالح، وتظهر رسالة واضحة مع رابط للتنزيل اليدوي. ما دامت قائمة المفاتيح فارغة يبقى السلوك كما هو (التحقق بـ sha256 فقط).
 - 🛡️ **إصدار أكثر أمانًا على GitHub:** تثبيت كل الإجراءات (actions) على commit محدد، وصلاحيات قراءة فقط افتراضيًا، والتوقيع يجري في بيئة `release` بعد موافقة المالك، مع شهادة مصدر البناء (attestation)، وإنشاء الإصدار كمسودة لا تُنشر إلا بعد التأكد من وجود الملفات الثلاثة. أُضيف Dependabot. دليل المالك: `RELEASING.md`.
 - 🚂 **إصدار بلا وسوم يدوية:** يكفي دمج طلب يرفع رقم الإصدار في `Cargo.toml`؛ يبني GitHub البرنامج وينتظر موافقة المالك ثم ينشئ الوسم والإصدار بنفسه. الدمج بلا تغيير في الرقم لا ينشر شيئًا.
+- 🔕 **رسالة هادئة عند تعذّر الوصول إلى خادم التحديثات** (HTTP 403 أو 404 أو 429): «تعذّر الوصول إلى خادم التحديثات الآن. برنامجك يعمل كالمعتاد، وسنحاول مرة أخرى لاحقًا.» بدل «rate limit… try again later»، وتظهر فقط عند الضغط على «التحقق من التحديثات»؛ الفحص التلقائي يبقى صامتًا.
 
 ### English
 - 🧯 **Crash log:** panics are recorded to `crash.txt` in the data folder; the next start shows a one-line notice with an "Open folder" button.
@@ -23,6 +24,7 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 - ⬇️ **"Get Ollama"** button in the "Ollama isn't running" banner, opening ollama.com/download.
 - 🔤 **Digits:** Western 123 by default in the Arabic UI, with a setting for Arabic-Indic ١٢٣; number fields accept both.
 - 🆘 **Support** section in Settings: support@fastkiwi.app, the support page and the open-source licences.
+- 🔕 **Calm "update server can't be reached" message** for HTTP 403, 404 and 429: "The update server can't be reached right now. Your app keeps working; we'll try again later." instead of a rate-limit error, shown only after "Check for updates"; automatic checks stay silent.
 - 📜 **Third-party notices:** `THIRD-PARTY-NOTICES.txt`, generated from `Cargo.lock` by `tools/make_notices.py`, embedded in the exe; CI checks it is current and every licence is on the allowlist.
 - 🪛 Empty-field placeholders in the Arabic UI keep their "…" at the end of the sentence.
 - 🧩 **Runs without the Visual C++ runtime:** the exe now links the C runtime statically, so it starts on Windows 10/11 PCs without the Visual C++ Redistributable (2.2.0 needed VCRUNTIME140.dll). CI fails if the exe imports any DLL that is not part of Windows (`tools/check_imports.py`).

@@ -1,6 +1,7 @@
 //! Auto-update: check GitHub for a newer release and install it. See `docs/API.md`
 //! and `src/update.rs`. Network problems never produce a 5xx: `check` returns
-//! `available: false` + `error`, `install` streams `{"error": ...}` (plus
+//! `available: false` + `error` (plus `"code": "unreachable"` when GitHub refuses
+//! the check or has no release: HTTP 403/404/429), `install` streams `{"error": ...}` (plus
 //! `"code": "signature"` when the update's minisign signature is missing or invalid).
 
 use std::sync::Mutex;
@@ -42,6 +43,10 @@ struct CheckResponse {
     published_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    /// `"unreachable"`: the update server refused the check or has no release
+    /// (the UI shows its own neutral, localized message, on a manual check only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     just_updated: Option<String>,
 }
@@ -58,6 +63,7 @@ fn empty_response() -> CheckResponse {
         notes: None,
         published_at: None,
         error: None,
+        code: None,
         just_updated: None,
     }
 }
@@ -86,15 +92,19 @@ async fn run_check(force: bool) -> (CheckResponse, Option<ReleaseInfo>) {
     let mut resp = empty_response();
     let mut release = None;
     match update::fetch_latest().await {
-        Ok(Some(r)) => {
+        Ok(r) => {
             resp.available = update::is_newer(&r.version, CURRENT_VERSION);
             resp.latest = Some(r.version.clone());
             resp.notes = Some(r.notes.clone());
             resp.published_at = r.published_at.clone();
             release = resp.available.then_some(r);
         }
-        Ok(None) => {} // no release published (or repo not found)
-        Err(e) => resp.error = Some(format!("{e:#}")),
+        Err(e) => {
+            if update::is_server_unreachable(&e) {
+                resp.code = Some("unreachable");
+            }
+            resp.error = Some(format!("{e:#}"));
+        }
     }
     // Errors are cached too (avoids hammering GitHub), but a forced check retries.
     *CACHE.lock().unwrap_or_else(|e| e.into_inner()) =

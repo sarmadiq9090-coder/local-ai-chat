@@ -1,7 +1,8 @@
 //! Auto-update from GitHub Releases (spec: `docs/specs/auto-update.md`).
 //!
-//! - `fetch_latest()` asks GitHub for the latest release of [`REPO`] (`Ok(None)`
-//!   when there is no release / no repo); `is_newer()` compares it to this build.
+//! - `fetch_latest()` asks GitHub for the latest release of [`REPO`] (a
+//!   [`ServerUnreachable`] error when GitHub refuses or finds no release / no
+//!   repo); `is_newer()` compares it to this build.
 //! - `install()` downloads the `local-ai-chat.exe` asset, verifies it against the
 //!   `local-ai-chat.exe.sha256` asset and — once [`TRUSTED_PUBLIC_KEYS`] is not
 //!   empty — against the minisign signature `local-ai-chat.exe.minisig`
@@ -310,9 +311,42 @@ fn http() -> &'static reqwest::Client {
     })
 }
 
-/// Fetch the latest release. `Ok(None)` = there is no release (404: repo or
-/// release missing). `Err` = network/HTTP/parse problem (message is user-facing).
-pub async fn fetch_latest() -> anyhow::Result<Option<ReleaseInfo>> {
+/// The update server refused the check or has no release for us (HTTP 403,
+/// 404, 429: rate limit, repository missing or unavailable). Nothing the user
+/// can fix and nothing wrong with the app, so the UI shows a neutral, localized
+/// message (`code: "unreachable"`, string `upd_unreachable`) on a manual check
+/// only; automatic checks stay silent and simply run again later.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ServerUnreachable(pub u16);
+
+impl std::fmt::Display for ServerUnreachable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(SERVER_UNREACHABLE_MESSAGE)
+    }
+}
+
+impl std::error::Error for ServerUnreachable {}
+
+/// English text of [`ServerUnreachable`] (the UI shows its own `upd_unreachable`).
+pub const SERVER_UNREACHABLE_MESSAGE: &str =
+    "The update server can't be reached right now. Your app keeps working; we'll try again later.";
+
+/// True if `e` (or anything in its chain) is a [`ServerUnreachable`].
+pub fn is_server_unreachable(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| c.is::<ServerUnreachable>())
+}
+
+/// The error for a non-success HTTP status of the release feed.
+fn feed_status_error(status: u16) -> anyhow::Error {
+    match status {
+        403 | 404 | 429 => anyhow::Error::new(ServerUnreachable(status)),
+        _ => anyhow::anyhow!("update server returned HTTP {status}"),
+    }
+}
+
+/// Fetch the latest release. `Err` = network/HTTP/parse problem (message is
+/// user-facing); [`ServerUnreachable`] when GitHub refuses or has no release.
+pub async fn fetch_latest() -> anyhow::Result<ReleaseInfo> {
     let resp = http()
         .get(feed_url())
         .header("Accept", "application/vnd.github+json")
@@ -321,24 +355,14 @@ pub async fn fetch_latest() -> anyhow::Result<Option<ReleaseInfo>> {
         .await
         .context("could not reach the update server")?;
     let status = resp.status();
-    if status == reqwest::StatusCode::NOT_FOUND {
-        return Ok(None);
-    }
-    if status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::TOO_MANY_REQUESTS
-    {
-        bail!(
-            "update server rate limit reached, try again later (HTTP {})",
-            status.as_u16()
-        );
-    }
     if !status.is_success() {
-        bail!("update server returned HTTP {}", status.as_u16());
+        return Err(feed_status_error(status.as_u16()));
     }
     let bytes = resp
         .bytes()
         .await
         .context("could not read the update info")?;
-    parse_release(&bytes).map(Some)
+    parse_release(&bytes)
 }
 
 // ---------------------------------------------------------------- checksums
@@ -823,34 +847,54 @@ mod tests {
     async fn feed_404_and_errors() {
         // Only this test touches the env var (tests in this module run it serially here).
         // SAFETY: no other test reads or writes LOCALAI_UPDATE_FEED.
-        unsafe {
-            std::env::set_var(
-                FEED_ENV,
-                one_shot_server("404 Not Found", r#"{"message":"Not Found"}"#),
-            )
-        };
-        assert_eq!(fetch_latest().await.unwrap(), None);
+        // 403 (rate limit or blocked), 404 (no release / repo missing or suspended)
+        // and 429 all give the neutral "can't be reached" error, never "try again in an hour".
+        for (status_line, body) in [
+            ("404 Not Found", r#"{"message":"Not Found"}"#),
+            ("403 Forbidden", r#"{"message":"API rate limit exceeded"}"#),
+            ("429 Too Many Requests", r#"{"message":"slow down"}"#),
+        ] {
+            unsafe { std::env::set_var(FEED_ENV, one_shot_server(status_line, body)) };
+            let e = fetch_latest().await.unwrap_err();
+            assert!(is_server_unreachable(&e), "{status_line}: {e:#}");
+            assert_eq!(
+                format!("{e:#}"),
+                SERVER_UNREACHABLE_MESSAGE,
+                "{status_line}"
+            );
+            assert!(!format!("{e:#}").contains("rate limit"), "{status_line}");
+        }
 
-        unsafe {
-            std::env::set_var(
-                FEED_ENV,
-                one_shot_server("403 Forbidden", r#"{"message":"rate limit"}"#),
-            )
-        };
+        unsafe { std::env::set_var(FEED_ENV, one_shot_server("500 Internal Server Error", "{}")) };
+        let e = fetch_latest().await.unwrap_err();
         assert!(
-            fetch_latest()
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("rate limit")
+            !is_server_unreachable(&e) && format!("{e:#}").contains("HTTP 500"),
+            "{e:#}"
         );
 
         unsafe { std::env::set_var(FEED_ENV, one_shot_server("200 OK", RELEASE_JSON)) };
-        assert_eq!(fetch_latest().await.unwrap().unwrap().version, "2.1.0");
+        assert_eq!(fetch_latest().await.unwrap().version, "2.1.0");
 
         unsafe { std::env::set_var(FEED_ENV, "http://127.0.0.1:1/unreachable") };
-        assert!(fetch_latest().await.is_err());
+        let e = fetch_latest().await.unwrap_err();
+        assert!(!is_server_unreachable(&e), "{e:#}");
         unsafe { std::env::remove_var(FEED_ENV) };
+    }
+
+    #[test]
+    fn unreachable_message_is_neutral() {
+        assert_eq!(
+            SERVER_UNREACHABLE_MESSAGE,
+            "The update server can't be reached right now. Your app keeps working; we'll try again later."
+        );
+        for status in [403u16, 404, 429] {
+            let e = feed_status_error(status);
+            assert!(is_server_unreachable(&e));
+            assert!(is_server_unreachable(&e.context("checking for updates")));
+        }
+        for status in [400u16, 500, 502] {
+            assert!(!is_server_unreachable(&feed_status_error(status)));
+        }
     }
 
     #[test]
