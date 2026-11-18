@@ -49,7 +49,7 @@ Statically linked into `local-ai-chat.exe`.
 | rust-embed | 8.13.0 | MIT |
 | serde | 1.0.229 | MIT OR Apache-2.0 |
 | serde_json | 1.0.154 | MIT OR Apache-2.0 |
-| sha2 | 0.10.9 | MIT OR Apache-2.0 |
+| sha2 | 0.11.1 | MIT OR Apache-2.0 |
 | tao | 0.37.2 | Apache-2.0 |
 | tokio | 1.54.1 | MIT |
 | unicode-normalization | 0.1.26 | (MIT OR Apache-2.0) AND Unicode-3.0 |
