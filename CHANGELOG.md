@@ -4,7 +4,7 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
-## [2.2.1] — 2026-11-20
+## [2.2.1] — 2026-11-18
 
 > ملاحظة صريحة: هذا الإصدار مُختبَر آليًا في CI ولم يُجرَّب بعد على جهاز ويندوز حقيقي.
 >
