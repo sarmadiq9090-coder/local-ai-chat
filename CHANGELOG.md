@@ -4,6 +4,12 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [2.2.1] — 2026-11-20
+
+> ملاحظة صريحة: هذا الإصدار مُختبَر آليًا في CI ولم يُجرَّب بعد على جهاز ويندوز حقيقي.
+>
+> Honest note: tested automatically in CI, not yet on a real Windows PC.
+
 ### العربية
 - 📜 **الرخصة:** Lemon أصبح برنامجاً مملوكاً (مجانياً)؛ إشعارات الأطراف الثالثة دون تغيير.
 - 🧯 **سجل الأعطال:** عند توقّف Lemon بشكل غير متوقع يُحفظ السبب في `crash.txt` داخل مجلد البيانات، ويظهر تنبيه في التشغيل التالي مع زر لفتح المجلد.
