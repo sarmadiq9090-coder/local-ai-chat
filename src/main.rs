@@ -18,6 +18,7 @@ mod assistants;
 mod config;
 mod crash_log;
 mod error;
+mod more_from;
 mod ollama;
 mod server;
 mod single_instance;

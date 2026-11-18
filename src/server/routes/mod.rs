@@ -12,6 +12,7 @@ mod assistants;
 mod conversations;
 mod crash;
 mod export;
+mod more_from;
 mod notices;
 mod settings;
 mod status;
@@ -29,4 +30,5 @@ pub fn router() -> Router<AppState> {
         .merge(update::router())
         .merge(crash::router())
         .merge(notices::router())
+        .merge(more_from::router())
 }
