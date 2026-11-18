@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="InstaWords — تفقيط"><title>InstaWords — تفقيط</title><defs>
+<linearGradient id="ig" x1="0" y1="0" x2="1" y2="1"><stop offset="0.00" stop-color="#7c3aed"/><stop offset="0.20" stop-color="#8f36d5"/><stop offset="0.40" stop-color="#a232be"/><stop offset="0.60" stop-color="#b52fa6"/><stop offset="0.80" stop-color="#c82b8f"/><stop offset="1.00" stop-color="#db2777"/></linearGradient>
+<radialGradient id="ih" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#fff" stop-opacity="0.16"/><stop offset="0.6" stop-color="#fff" stop-opacity="0.10"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+<filter id="is" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="25.6"/></filter>
+<clipPath id="ic"><rect x="30.72" y="30.72" width="961.56" height="961.56" rx="225.28"/></clipPath>
+</defs>
+<g clip-path="url(#ic)">
+<rect width="1024" height="1024" fill="url(#ig)"/>
+<ellipse cx="512.0" cy="-281.6" rx="972.8" ry="768.0" fill="url(#ih)"/>
+<g transform="translate(12.3 25.6)" stroke="#2e0a4a" fill="#2e0a4a" opacity="0.45" filter="url(#is)"><g transform="translate(-44 44.5)"><g transform="translate(512 512) scale(1.08) rotate(45) translate(-512 -530)"><g stroke-linejoin="round" stroke-linecap="round" fill="none"><path d="M512 800 L372 540 Q352 470 404 400 L620 400 Q672 470 652 540 Z" stroke-width="64"/><line x1="512" y1="790" x2="512" y2="600" stroke-width="44"/><rect x="402" y="236" width="220" height="96" rx="30" stroke-width="64"/></g><circle cx="512" cy="560" r="40"/></g></g></g>
+</g>
+<g transform="translate(-44 44.5)"><g transform="translate(512 512) scale(1.08) rotate(45) translate(-512 -530)"><path d="M512 800 L372 540 Q352 470 404 400 L620 400 Q672 470 652 540 Z" fill="#fff" fill-opacity="0.157"/><g stroke="#fff" stroke-linejoin="round" stroke-linecap="round" fill="none"><path d="M512 800 L372 540 Q352 470 404 400 L620 400 Q672 470 652 540 Z" stroke-width="64"/><line x1="512" y1="790" x2="512" y2="600" stroke-width="44"/><rect x="402" y="236" width="220" height="96" rx="30" stroke-width="64"/></g><circle cx="512" cy="560" r="40" fill="#fff"/></g></g>
+</svg>

@@ -11,7 +11,7 @@ The user's words: *"Make an auto-update button."*
    - writes the new exe in its place,
    - spawns the new exe with `--after-update` and exits.
 5. On start with `--after-update`, the app deletes `local-ai-chat.old.exe` (retried for ~10 s in the background — the old process may still be exiting). The window build waits up to **30 s** for the old instance's single-instance mutex (`single_instance::acquire_wait`); if it is still held, a native error box (Arabic + English) explains that the previous version is still running instead of exiting silently. In `--serve` dev mode the new process waits up to ~10 s for the old one to free the port (`update::wait_for_port`) and shows a toast "تم التحديث إلى v2.1.0".
-6. Failures (no internet, rate limit, bad checksum, missing/invalid signature) never break the app: show a toast and keep the current version. If writing the new exe fails, rename `.old` back.
+6. Failures (no internet, rate limit, bad checksum, missing/invalid signature) never break the app: show a toast and keep the current version. A failed check shows nothing by itself; only a manual "Check for updates" shows it, and HTTP 403/404/429 from the update server show the neutral "can't be reached right now; we'll try again later" text. If writing the new exe fails, rename `.old` back.
 
 ## Signature (spec: `docs/specs/signing.md`)
 - `update::TRUSTED_PUBLIC_KEYS` (compile-time constant; primary + backup minisign public keys). **Empty** (as shipped until the owner's keys are pasted in): sha256 only, exactly as 2.2.0, and the log says signature checking is not configured.

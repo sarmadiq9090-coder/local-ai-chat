@@ -8,6 +8,10 @@
 //   features/settings with the settings form) and appends an "Updates" section
 //   (auto-check toggle — part of the dialog draft: saved on Save, dropped on Cancel;
 //   "Check for updates" button whose result stays visible across dialog rebuilds).
+// - A failed check never shows anything by itself (automatic checks stay silent and
+//   run again later); only the "Check for updates" button shows the result. When the
+//   update server refuses or has no release (`code: "unreachable"`) it shows the
+//   neutral `upd_unreachable` text instead of the raw error.
 // - An install refused because the update's signature is missing or invalid
 //   (`code: "signature"`, docs/specs/signing.md) shows a dedicated message with
 //   links to download manually; the current version is kept.
@@ -174,6 +178,7 @@ export function renderSettingsSection({ form, draft, contribute } = {}) {
   const showResult = () => {
     view.hidden = !info?.available;
     if (info?.available) result.textContent = t("upd_available", { version: info.latest });
+    else if (info?.code === "unreachable") result.textContent = t("upd_unreachable");
     else if (info?.error) result.textContent = t("upd_check_failed", { error: info.error });
     else if (info) result.textContent = t("upd_current", { version: info.current });
   };

@@ -25,6 +25,7 @@ import assistants from "./assistants/assistants.js";
 import update from "./update/update.js";
 import crash from "./crash/crash.js";
 import support from "./support/support.js";
+import morefrom from "./morefrom/morefrom.js";
 
 export default [
   models,        // Esc 1: model dropdown
@@ -40,4 +41,5 @@ export default [
   update,
   crash,
   support,
+  morefrom,
 ];

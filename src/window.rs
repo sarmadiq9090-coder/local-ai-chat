@@ -103,6 +103,8 @@ fn is_app_url(app_url: &str, target: &str) -> bool {
 }
 
 /// The only `mailto:` link the app opens (the Support section, `ui/features/support`).
+/// The only custom scheme is a Microsoft Store page, `ms-windows-store://pdp/?productid=<id>`
+/// ("More from FastKiwi", `crate::more_from::is_store_uri`).
 const SUPPORT_MAILTO: &str = "mailto:support@fastkiwi.app";
 
 fn open_external(url: &str) {
@@ -113,12 +115,12 @@ fn open_external(url: &str) {
 
 /// What may leave the app for the default browser / mail client: a parsed
 /// http(s) URL with a host and no user name or password, or exactly the support
-/// address. Anything else (file:, javascript:, other mailto: addresses, custom
-/// schemes) is refused. The URL is passed on normalized (spaces and quotes
+/// address, or a Store product page. Anything else (file:, javascript:, other
+/// mailto: addresses, other custom schemes) is refused. The URL is passed on normalized (spaces and quotes
 /// percent-encoded) and with commas as `%2C`, because explorer.exe reads commas in
 /// its argument as switch separators (`/select,` `/root,`).
 fn external_target(url: &str) -> Option<String> {
-    if url == SUPPORT_MAILTO {
+    if url == SUPPORT_MAILTO || crate::more_from::is_store_uri(url) {
         return Some(url.to_string());
     }
     let u = reqwest::Url::parse(url).ok()?;
@@ -155,6 +157,15 @@ mod tests {
             open("https://x.com/,/select,C:\\Windows\\System32\\calc.exe").as_deref(),
             Some("https://x.com/%2C/select%2CC:/Windows/System32/calc.exe")
         );
+        assert_eq!(
+            open("ms-windows-store://pdp/?productid=9NGB1F7T7JGN").as_deref(),
+            Some("ms-windows-store://pdp/?productid=9NGB1F7T7JGN")
+        );
+        assert_eq!(
+            open("ms-windows-store://pdp/?productid=9NGB1F7T7JGN,/select"),
+            None
+        );
+        assert_eq!(open("ms-windows-store://downloadsandupdates"), None);
         assert_eq!(open("mailto:someone@example.com"), None);
         assert_eq!(open("mailto:support@fastkiwi.app?subject=x"), None);
         assert_eq!(open("file:///C:/Windows/System32/calc.exe"), None);

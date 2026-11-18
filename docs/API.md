@@ -206,7 +206,7 @@ refused. With an empty key list (current builds) only the sha256 is checked. Sam
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| GET | `/api/app/update/check` | – | `UpdateCheck`. Query: `force=1` bypasses the 10-min cache; `local=1` skips the network (cached result or just `current`). Network problems never give a 5xx: `available: false` + `error`. No release / repo not found (404) → `available: false`, no `error`. |
+| GET | `/api/app/update/check` | – | `UpdateCheck`. Query: `force=1` bypasses the 10-min cache; `local=1` skips the network (cached result or just `current`). Network problems never give a 5xx: `available: false` + `error`. GitHub refuses the check or has no release / repo (HTTP 403, 404, 429) → `available: false`, `error` + `code: "unreachable"` (the UI shows a neutral "can't be reached right now, we'll try again later" text, on a manual check only). |
 | POST | `/api/app/update/install` | – | NDJSON stream: `{ "status": "downloading", "downloaded": number, "total": number \| null }` … `{ "status": "verifying" }` … `{ "status": "restarting" }`, or a final `{ "error": string, "code"?: "signature" }` (no update, insecure URL, download failed or too large, checksum mismatch, signature missing/invalid → `code: "signature"`, swap failed — the current exe is left in place). After `restarting` the exe was swapped (old one → `local-ai-chat.old.exe`), the new exe was started with `--after-update` (plus `--serve <port>` in dev mode) and this process exits ~1 s later. |
 
 ```ts
@@ -217,6 +217,7 @@ type UpdateCheck = {
   notes?: string;             // release notes (Markdown)
   published_at?: string;      // ISO 8601
   error?: string;             // check failed (offline, rate limit, bad release)
+  code?: "unreachable";       // with error: HTTP 403/404/429 from the update server
   just_updated?: string;      // set once after a restart into a new version (from --after-update)
 };
 ```
@@ -242,6 +243,35 @@ Implemented in `src/server/routes/notices.rs`: `THIRD-PARTY-NOTICES.txt` (genera
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/api/app/notices` | – | `text/plain; charset=utf-8` — the notices file |
+
+## More from FastKiwi — `/api/app/more-from`
+
+Implemented in `src/server/routes/more_from.rs` and `src/more_from.rs`: the other FastKiwi apps, from
+a copy of the site's `data/apps.json` (schema 1) vendored in `ui/features/morefrom/data/` (source
+commit in `SOURCE.txt`, refreshed by `python3 tools/sync_apps.py --site <site checkout>`) and compiled
+into the exe. Nothing is fetched at runtime. Lemon itself is left out; an entry whose page isn't on
+`https://fastkiwi.app/`, or with an unknown `status`, is dropped. Shown in Settings by `ui/features/morefrom`.
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/api/app/more-from` | – | `MoreFromApp[]`, in apps.json order |
+
+```ts
+type MoreFromApp = {
+  id: string;                         // apps.json id, e.g. "remember-me"
+  coming_soon: boolean;               // status "coming-soon": page link only
+  name: { ar: string; en: string };
+  tagline: { ar: string; en: string };
+  description: { ar: string; en: string };
+  url: { ar: string; en: string };    // https://fastkiwi.app/... only
+  store: string | null;               // "ms-windows-store://pdp/?productid=<12 chars>" only for a
+                                      // released app whose Store listing is live
+  icon: string | null;                // UI path of the vendored icon, "features/morefrom/data/img/<id>.svg|png"
+};
+```
+
+The native window opens `https://` links in the default browser and, as its only custom scheme,
+exactly `ms-windows-store://pdp/?productid=<id>` (`src/window.rs`).
 
 ## Static UI (everything else)
 
