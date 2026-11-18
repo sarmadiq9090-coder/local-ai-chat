@@ -182,7 +182,9 @@ Contributions, bug reports and translations are welcome. Please read
 
 ## License
 
-Free to use on your own devices; proprietary software, see [LICENSE](LICENSE). © 2026 Sarmad. Versions up to 2.2.0 (released before 2026-11-09) remain available under the MIT licence they were published with.
+Free to use on your own devices; proprietary software, see [LICENSE](LICENSE). © 2026 FastKiwi (Sarmad). Versions up to 2.2.0 (released before 2026-11-09) remain available under the MIT licence they were published with.
+
+The Lemon name and icon are trademarks of FastKiwi (Sarmad): see [TRADEMARKS.md](TRADEMARKS.md).
 
 Third-party components and their licenses are listed in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Ollama and AI models are not
