@@ -14,7 +14,6 @@ server on `127.0.0.1` serves an embedded HTML/JS UI to a native
 (WebView2) window, and proxies requests to your local Ollama.
 
 [![CI](https://github.com/sarmadiq9090-coder/local-ai-chat/actions/workflows/ci.yml/badge.svg)](https://github.com/sarmadiq9090-coder/local-ai-chat/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ## Features
 
@@ -183,7 +182,7 @@ Contributions, bug reports and translations are welcome. Please read
 
 ## License
 
-[MIT](LICENSE) © 2026 Sarmad.
+Free to use on your own devices; proprietary software, see [LICENSE](LICENSE). © 2026 Sarmad. Versions up to 2.2.0 (released before 2026-11-09) remain available under the MIT licence they were published with.
 
 Third-party components and their licenses are listed in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Ollama and AI models are not

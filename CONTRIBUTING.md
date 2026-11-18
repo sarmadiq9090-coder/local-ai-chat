@@ -112,4 +112,4 @@ Before opening a PR, please make sure that:
 ## License
 
 By contributing, you agree that your contributions are licensed under the
-project's [MIT License](LICENSE).
+project's [LICENSE](LICENSE) (proprietary; free to use).

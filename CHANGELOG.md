@@ -5,6 +5,7 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 ## [Unreleased]
 
 ### العربية
+- 📜 **الرخصة:** Lemon أصبح برنامجاً مملوكاً (مجانياً)؛ إشعارات الأطراف الثالثة دون تغيير.
 - 🧯 **سجل الأعطال:** عند توقّف Lemon بشكل غير متوقع يُحفظ السبب في `crash.txt` داخل مجلد البيانات، ويظهر تنبيه في التشغيل التالي مع زر لفتح المجلد.
 - 🌐 **لغة التشغيل الأول تتبع ويندوز:** عربية إن كانت لغة واجهة ويندوز عربية، وإلا فالإنجليزية. اختيارك المحفوظ يبقى هو الأساس دائمًا.
 - ⬇️ **زر «تنزيل Ollama»** في شريط «Ollama غير شغّال» يفتح صفحة التنزيل الرسمية (ollama.com/download).
@@ -18,6 +19,7 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 - 🚂 **إصدار بلا وسوم يدوية:** يكفي دمج طلب يرفع رقم الإصدار في `Cargo.toml`؛ يبني GitHub البرنامج وينتظر موافقة المالك ثم ينشئ الوسم والإصدار بنفسه. الدمج بلا تغيير في الرقم لا ينشر شيئًا.
 
 ### English
+- 📜 **Licence:** Lemon is now proprietary (free); third-party notices unchanged.
 - 🧯 **Crash log:** panics are recorded to `crash.txt` in the data folder; the next start shows a one-line notice with an "Open folder" button.
 - 🌐 **First run follows the Windows display language:** Arabic on Arabic Windows, English otherwise. A saved choice always wins.
 - ⬇️ **"Get Ollama"** button in the "Ollama isn't running" banner, opening ollama.com/download.
