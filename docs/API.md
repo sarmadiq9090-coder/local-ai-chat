@@ -206,7 +206,7 @@ refused. With an empty key list (current builds) only the sha256 is checked. Sam
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| GET | `/api/app/update/check` | – | `UpdateCheck`. Query: `force=1` bypasses the 10-min cache; `local=1` skips the network (cached result or just `current`). Network problems never give a 5xx: `available: false` + `error`. No release / repo not found (404) → `available: false`, no `error`. |
+| GET | `/api/app/update/check` | – | `UpdateCheck`. Query: `force=1` bypasses the 10-min cache; `local=1` skips the network (cached result or just `current`). Network problems never give a 5xx: `available: false` + `error`. GitHub refuses the check or has no release / repo (HTTP 403, 404, 429) → `available: false`, `error` + `code: "unreachable"` (the UI shows a neutral "can't be reached right now, we'll try again later" text, on a manual check only). |
 | POST | `/api/app/update/install` | – | NDJSON stream: `{ "status": "downloading", "downloaded": number, "total": number \| null }` … `{ "status": "verifying" }` … `{ "status": "restarting" }`, or a final `{ "error": string, "code"?: "signature" }` (no update, insecure URL, download failed or too large, checksum mismatch, signature missing/invalid → `code: "signature"`, swap failed — the current exe is left in place). After `restarting` the exe was swapped (old one → `local-ai-chat.old.exe`), the new exe was started with `--after-update` (plus `--serve <port>` in dev mode) and this process exits ~1 s later. |
 
 ```ts
@@ -217,6 +217,7 @@ type UpdateCheck = {
   notes?: string;             // release notes (Markdown)
   published_at?: string;      // ISO 8601
   error?: string;             // check failed (offline, rate limit, bad release)
+  code?: "unreachable";       // with error: HTTP 403/404/429 from the update server
   just_updated?: string;      // set once after a restart into a new version (from --after-update)
 };
 ```
