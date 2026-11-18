@@ -5,7 +5,7 @@ trademarks (™) of FastKiwi (Sarmad).
 
 ## The licence does not cover the name
 
-Since 2.2.1 Lemon is proprietary, free-to-use software under the [LICENCE](LICENSE) (versions up to 2.2.0 stay MIT). No licence
+Since 2.3.0 Lemon is proprietary, free-to-use software under the [LICENCE](LICENSE) (versions up to 2.2.0 stay MIT). No licence
 grants any rights to the names Lemon or FastKiwi, or to the app's icon.
 Ollama and AI models are not part of this project and have their own names and licences.
 
